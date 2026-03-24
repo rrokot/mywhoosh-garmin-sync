@@ -1,3 +1,11 @@
+const STATUS_KEYS = [
+  "syncStatus",
+  "syncStatusMessage",
+  "syncInProgress",
+  "lastUserMessage",
+  "lastUserMessageAt"
+];
+
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs?.[0] || null;
@@ -37,15 +45,7 @@ function setStatus(text) {
   }
 }
 
-async function refreshStatus() {
-  const data = await chrome.storage.local.get([
-    "syncStatus",
-    "syncStatusMessage",
-    "syncInProgress",
-    "lastUserMessage",
-    "lastUserMessageAt"
-  ]);
-
+function renderStatus(data) {
   if (data?.syncInProgress && data?.syncStatusMessage) {
     setStatus(`Running: ${data.syncStatusMessage}`);
     return;
@@ -57,6 +57,11 @@ async function refreshStatus() {
   }
 
   setStatus("No runs yet.");
+}
+
+async function refreshStatus() {
+  const data = await chrome.storage.local.get(STATUS_KEYS);
+  renderStatus(data);
 }
 
 async function start(mode) {
@@ -78,7 +83,6 @@ async function start(mode) {
   }
 
   setStatus(mode === "latest" ? "Started: latest activity..." : "Started: new activities...");
-  await refreshStatus();
 }
 
 async function copyLogs() {
@@ -99,6 +103,17 @@ async function copyLogs() {
   setStatus(`Copied ${tailLines.length} log lines.`);
 }
 
+function handleStorageChange(changes, areaName) {
+  if (areaName !== "local") {
+    return;
+  }
+
+  const hasStatusChange = STATUS_KEYS.some((key) => Object.prototype.hasOwnProperty.call(changes, key));
+  if (hasStatusChange) {
+    refreshStatus().catch(() => {});
+  }
+}
+
 document.getElementById("btn-new")?.addEventListener("click", () => {
   start("new").catch((error) => setStatus(String(error?.message || error)));
 });
@@ -111,7 +126,9 @@ document.getElementById("btn-copy-logs")?.addEventListener("click", () => {
   copyLogs().catch((error) => setStatus(String(error?.message || error)));
 });
 
+chrome.storage.onChanged.addListener(handleStorageChange);
+window.addEventListener("unload", () => {
+  chrome.storage.onChanged.removeListener(handleStorageChange);
+});
+
 refreshStatus().catch(() => {});
-setInterval(() => {
-  refreshStatus().catch(() => {});
-}, 1200);

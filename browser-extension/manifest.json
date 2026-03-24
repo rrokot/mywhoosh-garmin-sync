@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MyWhoosh to Garmin Uploader",
-  "version": "0.2.12",
+  "version": "0.2.16",
   "description": "Upload MyWhoosh FIT activities to Garmin Connect using your current Chrome session.",
   "icons": {
     "128": "icons/icon-128.png"
@@ -14,15 +14,18 @@
   ],
   "host_permissions": [
     "<all_urls>",
+    "https://*.mywhoosh.com/*",
     "https://connect.garmin.com/*",
-    "https://connectapi.garmin.com/*"
+    "https://connectapi.garmin.com/*",
+    "https://sso.garmin.com/*",
+    "https://thegarth.s3.amazonaws.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_title": "MyWhoosh -> Garmin",
-    "default_popup": "popup.html",
+    "default_popup": "popup/popup.html",
     "default_icon": {
       "128": "icons/icon-128.png"
     }

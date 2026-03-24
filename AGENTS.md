@@ -6,9 +6,13 @@
 - Do not add legacy Python/BAT sync flows back.
 
 ## Main Components
-- `browser-extension/background.js`: core sync, MyWhoosh API, Garmin upload logic.
+- `browser-extension/background.js`: service worker entrypoint that loads background modules.
+- `browser-extension/background/runtime.js`: shared constants, logging, storage, Chrome adapters.
+- `browser-extension/background/garmin.js`: Garmin auth and upload flow.
+- `browser-extension/background/mywhoosh.js`: MyWhoosh API client and payload normalization.
+- `browser-extension/background/service-worker.js`: sync orchestration and Chrome listeners.
 - `browser-extension/content-mywhoosh.js`: reads MyWhoosh auth from page storage.
-- `browser-extension/popup.js` + `browser-extension/popup.html`: UI actions and status.
+- `browser-extension/popup/popup.js` + `browser-extension/popup/popup.html`: UI actions and status.
 - `tools/tail_extension_logs.ps1` + `tail_extension_logs.bat`: debug log extraction.
 
 ## Working Rules
