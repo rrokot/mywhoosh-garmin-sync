@@ -1,10 +1,18 @@
 (() => {
   const MWG = globalThis.MWG;
+  const MYWHOOSH_AUTH_WAIT_TIMEOUT_MS = 180000;
+  const MYWHOOSH_AUTH_POLL_INTERVAL_MS = 2500;
   const NO_ACTIVITIES_PROGRESS_INTERVAL_MS = 12000;
   const PROGRESS_NOTIFY_EVERY_N_ITEMS = 3;
   const {
+    clearStoredMyWhooshAuth,
+    chromeTabsCreate,
+    chromeTabsQuery,
+    chromeTabsRemove,
+    chromeTabsUpdate,
     EXTENSION_VERSION,
     LOG_LINES_STORAGE,
+    MYWHOOSH_APP_ENTRY_URL,
     activityKey,
     appendLog,
     collectMyWhooshAuth,
@@ -15,13 +23,18 @@
     fetchLatestNewMyWhooshActivity,
     fetchMyWhooshDownloadUrl,
     getProcessedKeysMap,
+    getStoredMyWhooshAuth,
     isMyWhooshUrl,
     notify,
+    resetGarminCaches,
+    resetRuntimeCaches,
     saveLastError,
+    setStoredMyWhooshAuth,
     setProcessedKeysMap,
     setUserStatus,
-    showCopyableText,
-    uploadOne
+    uploadOne,
+    wait,
+    waitForTabComplete
   } = MWG;
 
   function nowIso() {
@@ -43,31 +56,209 @@
     return mode === "latest" ? textLatest : textNew;
   }
 
-  async function setRunningStatus(message) {
+  function hasMyWhooshToken(auth) {
+    return Boolean(String(auth?.webToken || "").trim());
+  }
+
+  function isMyWhooshAuthError(error) {
+    return Boolean(error?.mywhooshAuth) || /MyWhoosh API failed: HTTP (401|403)/i.test(errorText(error));
+  }
+
+  async function tryCollectMyWhooshAuthFromTab(tab, source = "active-tab") {
+    if (!tab?.id || !isMyWhooshUrl(tab.url)) {
+      return null;
+    }
+
+    const authResponse = await collectMyWhooshAuth(tab.id);
+    if (!authResponse?.ok) {
+      throw new Error(authResponse?.error || "Could not read MyWhoosh auth from tab");
+    }
+
+    if (!hasMyWhooshToken(authResponse)) {
+      return null;
+    }
+
+    const stored = await setStoredMyWhooshAuth(authResponse, source);
+    return stored ? { ...stored, source } : null;
+  }
+
+  async function resolveMyWhooshAuth(tab) {
+    if (tab?.id && isMyWhooshUrl(tab.url)) {
+      try {
+        const tabAuth = await tryCollectMyWhooshAuthFromTab(tab, "active-tab");
+        if (tabAuth) {
+          return tabAuth;
+        }
+
+        await appendLog("warn", "MyWhoosh auth missing in current tab, checking stored token", {
+          tabUrl: tab.url || ""
+        });
+      } catch (error) {
+        await appendLog("warn", "Could not refresh MyWhoosh auth from current tab, checking stored token", {
+          tabUrl: tab?.url || "",
+          error: errorText(error)
+        });
+      }
+    }
+
+    const stored = await getStoredMyWhooshAuth();
+    if (hasMyWhooshToken(stored)) {
+      await appendLog("info", "Using stored MyWhoosh auth token", {
+        pageUrl: stored.pageUrl || "",
+        capturedAt: stored.capturedAt || ""
+      });
+      return {
+        ...stored,
+        source: "storage"
+      };
+    }
+
+    return null;
+  }
+
+  async function openMyWhooshAuthTab(active = true) {
+    const [activeTab] = await chromeTabsQuery({
+      active: true,
+      lastFocusedWindow: true
+    });
+    const authTab = await chromeTabsCreate({
+      url: MYWHOOSH_APP_ENTRY_URL,
+      active
+    });
+
+    if (!authTab?.id) {
+      throw new Error("Could not open MyWhoosh sign-in tab");
+    }
+
+    await waitForTabComplete(authTab.id, 90000);
+    return {
+      tabId: authTab.id,
+      previousTabId: activeTab?.id ?? null,
+      cleanupDone: false
+    };
+  }
+
+  async function cleanupMyWhooshAuthTab(authTab) {
+    if (!authTab || authTab.cleanupDone) {
+      return;
+    }
+    authTab.cleanupDone = true;
+
+    if (authTab.tabId) {
+      try {
+        await chromeTabsRemove(authTab.tabId);
+      } catch (_) {
+        // Ignore already-closed tab errors.
+      }
+    }
+
+    if (authTab.previousTabId) {
+      try {
+        await chromeTabsUpdate(authTab.previousTabId, { active: true });
+      } catch (_) {
+        // Ignore focus restore errors for tabs that no longer exist.
+      }
+    }
+  }
+
+  async function ensureMyWhooshAuthInteractive(tab) {
+    await appendLog("warn", "MyWhoosh login required, opening sign-in tab", {
+      tabUrl: tab?.url || ""
+    });
+    notify("MyWhoosh login required. Complete sign-in in opened tab.");
+    await setRunningStatus("Waiting for MyWhoosh login...", {
+      syncProgress: {
+        phase: "waiting_mywhoosh_login"
+      }
+    });
+
+    let authTab = null;
+    try {
+      authTab = await openMyWhooshAuthTab(true);
+    } catch (error) {
+      throw new Error(`Could not open MyWhoosh sign-in tab: ${errorText(error)}`);
+    }
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < MYWHOOSH_AUTH_WAIT_TIMEOUT_MS) {
+      await wait(MYWHOOSH_AUTH_POLL_INTERVAL_MS);
+
+      let refreshedAuth = null;
+      try {
+        refreshedAuth = await tryCollectMyWhooshAuthFromTab(
+          { id: authTab.tabId, url: MYWHOOSH_APP_ENTRY_URL },
+          "interactive-auth-tab"
+        );
+      } catch (_) {
+        refreshedAuth = null;
+      }
+
+      if (hasMyWhooshToken(refreshedAuth)) {
+        await cleanupMyWhooshAuthTab(authTab);
+        await setRunningStatus("MyWhoosh login detected. Continuing sync...", {
+          syncProgress: {
+            phase: "resuming_after_mywhoosh_login"
+          }
+        });
+        await appendLog("info", "MyWhoosh auth confirmed after interactive sign-in", {
+          waitedMs: Date.now() - startedAt
+        });
+        notify("MyWhoosh login detected. Continuing sync...");
+        return refreshedAuth;
+      }
+    }
+
+    throw new Error("MyWhoosh login not completed in time. Sign in on MyWhoosh tab and retry.");
+  }
+
+  async function setRunningStatus(message, extra = {}) {
     await setUserStatus("running", message, {
-      syncInProgress: true
+      syncInProgress: true,
+      ...extra
     });
   }
 
   async function setTerminalStatus(status, message, extra = {}) {
     await setUserStatus(status, message, {
       syncInProgress: false,
+      syncProgress: null,
       ...buildLastUserFields(message),
       ...extra
     });
   }
 
-  async function notifyAndExposeMessage(tabId, message) {
-    notify(message);
-    await showCopyableText(tabId, message);
+  async function recoverInterruptedSyncRun() {
+    let state = null;
+    try {
+      state = await chrome.storage.local.get([
+        "syncInProgress",
+        "syncStatus",
+        "syncStatusAt",
+        "syncStatusMessage"
+      ]);
+    } catch (_) {
+      return;
+    }
+
+    if (!state?.syncInProgress) {
+      return;
+    }
+
+    await setTerminalStatus("aborted", "Previous sync was interrupted. Start again.");
+    await appendLog("warn", "Recovered interrupted sync state after worker restart", {
+      previousStatus: String(state?.syncStatus || ""),
+      previousMessage: String(state?.syncStatusMessage || ""),
+      previousStatusAt: String(state?.syncStatusAt || "")
+    });
   }
 
   function buildSummaryMessage(summary, mode, migrationSuffix) {
     const firstFailed = summary.items.find((item) => item.status === "failed");
     const failSuffix = firstFailed?.detail ? ` | first fail: ${firstFailed.detail}` : "";
     const latestSuffix = mode === "latest" ? " | mode: latest" : "";
+    const noNewSuffix = Number(summary.totalNew || 0) <= 0 ? " | no new activities" : "";
 
-    return `Uploaded: ${summary.uploaded}, Duplicate: ${summary.duplicate}, Failed: ${summary.failed}, Skipped: ${summary.skipped}${latestSuffix}${migrationSuffix}${failSuffix}`;
+    return `Uploaded: ${summary.uploaded}, Duplicate: ${summary.duplicate}, Failed: ${summary.failed}, Skipped: ${summary.skipped}${latestSuffix}${migrationSuffix}${noNewSuffix}${failSuffix}`;
   }
 
   function createProgressReporter(mode) {
@@ -96,8 +287,19 @@
 
       const text =
         total <= 0
-          ? `Sync (${mode}): no activities | Found: ${summary.totalFound || 0}, Skipped: ${summary.skipped || 0}`
+          ? `Sync (${mode}): no activities`
           : `Sync (${mode}): ${current}/${total} | Uploaded: ${summary.uploaded || 0}, Duplicate: ${summary.duplicate || 0}, Failed: ${summary.failed || 0}`;
+      const progressSnapshot = {
+        phase,
+        mode,
+        current,
+        total,
+        totalFound: summary.totalFound || 0,
+        skipped: summary.skipped || 0,
+        uploaded: summary.uploaded || 0,
+        duplicate: summary.duplicate || 0,
+        failed: summary.failed || 0
+      };
 
       notify(text);
       await appendLog("info", "Sync progress", {
@@ -109,7 +311,9 @@
         failed: summary.failed || 0,
         skipped: summary.skipped || 0
       });
-      await setRunningStatus(text);
+      await setRunningStatus(text, {
+        syncProgress: progressSnapshot
+      });
     };
   }
 
@@ -118,30 +322,39 @@
     const onlyLatest = Boolean(options?.onlyLatest);
     const processed = await getProcessedKeysMap();
     let selectedActivities = [];
-    let skippedCount = 0;
+    let alreadyProcessedCount = 0;
 
     if (onlyLatest) {
       const latestSelection = await fetchLatestNewMyWhooshActivity(token, processed);
       selectedActivities = latestSelection.activity ? [latestSelection.activity] : [];
-      skippedCount = Math.max(0, latestSelection.scannedCount - selectedActivities.length);
+      alreadyProcessedCount = Math.max(0, latestSelection.scannedCount - selectedActivities.length);
     } else {
       const activities = await fetchAllMyWhooshActivities(token);
       const newActivities = activities.filter((activity) => !processed[activityKey(activity)]);
       selectedActivities = newActivities;
-      skippedCount = activities.length - selectedActivities.length;
+      alreadyProcessedCount = activities.length - selectedActivities.length;
     }
 
     const summary = {
       mode: "mywhoosh_api",
       scope: onlyLatest ? "latest" : "new",
-      totalFound: skippedCount + selectedActivities.length,
+      totalFound: alreadyProcessedCount + selectedActivities.length,
       totalNew: selectedActivities.length,
-      skipped: skippedCount,
+      alreadyProcessed: alreadyProcessedCount,
+      skipped: 0,
       uploaded: 0,
       duplicate: 0,
       failed: 0,
       items: []
     };
+
+    if (alreadyProcessedCount > 0) {
+      await appendLog("info", "Activities filtered before upload", {
+        scope: summary.scope,
+        alreadyProcessed: alreadyProcessedCount,
+        selected: selectedActivities.length
+      });
+    }
 
     let changed = false;
     if (typeof onProgress === "function") {
@@ -242,16 +455,9 @@
       mode: normalizedMode
     });
     await setUserStatus("started", `Started (${normalizedMode})`, {
-      syncInProgress: true
+      syncInProgress: true,
+      syncProgress: null
     });
-
-    if (!tab?.id || !isMyWhooshUrl(tab.url)) {
-      const message = "Open MyWhoosh page, then click extension icon again.";
-      await notifyAndExposeMessage(tab?.id, message);
-      await appendLog("warn", "Sync aborted: wrong tab", { tabUrl: tab?.url || "" });
-      await setTerminalStatus("aborted", message);
-      return;
-    }
 
     const migration = await ensureStrictStateMigration();
     let migrationSuffix = "";
@@ -266,19 +472,10 @@
     ));
     await setRunningStatus(`Checking MyWhoosh auth (${normalizedMode})`);
 
-    const authResponse = await collectMyWhooshAuth(tab.id);
-    if (!authResponse?.ok) {
-      await appendLog("error", "Could not read MyWhoosh auth", authResponse || null);
-      throw new Error(authResponse?.error || "Could not read MyWhoosh auth from tab");
-    }
-
-    const token = authResponse.webToken;
-    if (!token) {
-      const message = "MyWhoosh token not found. Log in on MyWhoosh in this tab/profile first.";
-      await notifyAndExposeMessage(tab?.id, message);
-      await appendLog("warn", "Sync aborted: missing webToken");
-      await setTerminalStatus("aborted", message);
-      return;
+    const tabReady = Boolean(tab?.id) && isMyWhooshUrl(tab.url);
+    let myWhooshAuth = await resolveMyWhooshAuth(tab);
+    if (!hasMyWhooshToken(myWhooshAuth)) {
+      myWhooshAuth = await ensureMyWhooshAuthInteractive(tab);
     }
 
     notify(modeText(
@@ -287,12 +484,46 @@
       "Sync started (latest): loading MyWhoosh activities..."
     ));
     const onProgress = createProgressReporter(normalizedMode);
+    let summary;
+    try {
+      summary = await handleUploadNewMyWhooshActivities(myWhooshAuth.webToken, onProgress, {
+        onlyLatest: normalizedMode === "latest"
+      });
+    } catch (error) {
+      if (!isMyWhooshAuthError(error)) {
+        throw error;
+      }
 
-    const summary = await handleUploadNewMyWhooshActivities(token, onProgress, {
-      onlyLatest: normalizedMode === "latest"
-    });
+      await clearStoredMyWhooshAuth("mywhoosh-api-auth-error");
+      await appendLog("warn", "Stored MyWhoosh auth was rejected by API", {
+        source: myWhooshAuth.source || "",
+        tabUrl: tab?.url || ""
+      });
+
+      let refreshedAuth = null;
+      try {
+        refreshedAuth = await tryCollectMyWhooshAuthFromTab(tab, "auth-retry");
+      } catch (refreshError) {
+        await appendLog("warn", "Could not refresh MyWhoosh auth from tab after API auth error", {
+          tabUrl: tab?.url || "",
+          error: errorText(refreshError)
+        });
+      }
+
+      if (!hasMyWhooshToken(refreshedAuth)) {
+        refreshedAuth = await ensureMyWhooshAuthInteractive(tab);
+      }
+
+      await appendLog("info", "Retrying sync with refreshed MyWhoosh auth", {
+        previousSource: myWhooshAuth.source || ""
+      });
+      summary = await handleUploadNewMyWhooshActivities(refreshedAuth.webToken, onProgress, {
+        onlyLatest: normalizedMode === "latest"
+      });
+    }
+
     const message = buildSummaryMessage(summary, normalizedMode, migrationSuffix);
-    await notifyAndExposeMessage(tab?.id, message);
+    notify(message);
     await setTerminalStatus("finished", message);
   }
 
@@ -301,13 +532,23 @@
     const prefixedMessage = `Error: ${message}`;
     notify(prefixedMessage);
     saveLastError(message).catch(() => {});
-    showCopyableText(tab?.id, prefixedMessage).catch(() => {});
     setTerminalStatus("error", prefixedMessage).catch(() => {});
     appendLog("error", "Sync run failed", {
       message,
       tabUrl: tab?.url || "",
       mode: modeLabel(mode)
     }).catch(() => {});
+  }
+
+  async function clearExtensionCache() {
+    const state = await chrome.storage.local.get("syncInProgress");
+    if (state?.syncInProgress) {
+      throw new Error("Cannot clear cache while sync is running.");
+    }
+
+    resetGarminCaches();
+    resetRuntimeCaches();
+    await chrome.storage.local.clear();
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -322,13 +563,36 @@
         })
         .catch((error) => {
           sendResponse({ ok: false, error: errorText(error) });
+      });
+      return true;
+    }
+
+    if (message?.type === "CLEAR_EXTENSION_CACHE") {
+      clearExtensionCache()
+        .then(() => {
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: errorText(error) });
         });
       return true;
     }
 
     if (message?.type === "START_SYNC") {
-      const tabId = Number(message.tabId);
+      const rawTabId = message.tabId;
+      const tabId =
+        rawTabId === null || rawTabId === undefined || rawTabId === ""
+          ? null
+          : Number(rawTabId);
       const mode = message.mode === "latest" ? "latest" : "new";
+      if (tabId === null) {
+        runOneClickSync(null, mode).catch((error) => {
+          reportSyncFailure(null, mode, error);
+        });
+        sendResponse({ ok: true });
+        return false;
+      }
+
       if (!Number.isFinite(tabId) || tabId <= 0) {
         sendResponse({ ok: false, error: "Invalid tabId" });
         return false;
@@ -354,9 +618,13 @@
     return undefined;
   });
 
-  appendLog("info", "Background worker initialized", {
-    version: EXTENSION_VERSION
-  }).catch(() => {});
+  recoverInterruptedSyncRun()
+    .catch(() => {})
+    .then(() =>
+      appendLog("info", "Background worker initialized", {
+        version: EXTENSION_VERSION
+      }).catch(() => {})
+    );
 
   chrome.action.onClicked.addListener((tab) => {
     runOneClickSync(tab).catch((error) => {

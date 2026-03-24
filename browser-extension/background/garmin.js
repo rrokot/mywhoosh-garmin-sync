@@ -5,17 +5,17 @@
     GARMIN_AUTH_POLL_INTERVAL_MS,
     GARMIN_AUTH_WAIT_TIMEOUT_MS,
     GARMIN_CONNECTAPI_UPLOAD_URL,
-    GARMIN_MODERN_IMPORT_URL,
     GARMIN_OAUTH_CONSUMER_URL,
     GARMIN_OAUTH_USER_AGENT,
-    GARMIN_SIGNIN_URL,
     GARMIN_SSO_BASE_URL,
     GARMIN_SSO_EMBED_URL,
     GARMIN_SSO_SIGNIN_URL,
     GARMIN_UPLOAD_STRATEGY,
     appendLog,
     chromeTabsCreate,
+    chromeTabsGet,
     chromeTabsQuery,
+    chromeTabsRemove,
     chromeTabsUpdate,
     errorText,
     hasUploadFailures,
@@ -25,6 +25,7 @@
     looksLikeDuplicate,
     notify,
     seemsLikeAuthHtml,
+    setUserStatus,
     wait,
     waitForTabComplete
   } = MWG;
@@ -34,11 +35,59 @@
     garminApiAuthHeaderCapturedAt: 0,
     garminApiAuthHeaderLogAt: 0,
     garminCsrfTokenCache: null,
-    garminOauthConsumerCache: null
+    garminOauthConsumerCache: null,
+    garminSsoTicketCache: null,
+    garminSsoTicketCapturedAt: 0
   });
+  const GARMIN_SSO_TICKET_MAX_AGE_MS = 2 * 60 * 1000;
 
   function isGarminBearer(value) {
     return /^Bearer\s+.+/i.test(String(value || "").trim());
+  }
+
+  function resetGarminCaches() {
+    garminState.garminApiAuthHeaderCache = null;
+    garminState.garminApiAuthHeaderCapturedAt = 0;
+    garminState.garminApiAuthHeaderLogAt = 0;
+    garminState.garminCsrfTokenCache = null;
+    garminState.garminOauthConsumerCache = null;
+    garminState.garminSsoTicketCache = null;
+    garminState.garminSsoTicketCapturedAt = 0;
+  }
+
+  function getFreshGarminSsoTicket() {
+    const value = String(garminState.garminSsoTicketCache || "").trim();
+    if (!value) {
+      return null;
+    }
+    if (Date.now() - garminState.garminSsoTicketCapturedAt > GARMIN_SSO_TICKET_MAX_AGE_MS) {
+      garminState.garminSsoTicketCache = null;
+      garminState.garminSsoTicketCapturedAt = 0;
+      return null;
+    }
+    return value;
+  }
+
+  function setGarminSsoTicket(ticket, source = "interactive-auth-tab", ticketUrl = "") {
+    const normalized = String(ticket || "").trim();
+    if (!normalized) {
+      return;
+    }
+
+    garminState.garminSsoTicketCache = normalized;
+    garminState.garminSsoTicketCapturedAt = Date.now();
+    appendLog("info", "Captured Garmin SSO ticket", {
+      source,
+      ticketUrl,
+      length: normalized.length
+    }).catch(() => {});
+  }
+
+  function consumeFreshGarminSsoTicket() {
+    const ticket = getFreshGarminSsoTicket();
+    garminState.garminSsoTicketCache = null;
+    garminState.garminSsoTicketCapturedAt = 0;
+    return ticket;
   }
 
   function getFreshGarminApiAuthorization() {
@@ -396,37 +445,17 @@
     };
   }
 
-  function extractGarminCsrfToken(text) {
-    const match = String(text || "").match(
-      /<meta[^>]+name=["']csrf-token["'][^>]+content=["']([^"']+)/i
-    );
-    return match?.[1] ? match[1].trim() : null;
-  }
+  async function getGarminSsoAuthState(silent = false) {
+    const cachedTicket = getFreshGarminSsoTicket();
+    if (cachedTicket) {
+      return {
+        authenticated: true,
+        ticket: cachedTicket,
+        reason: "interactive-ticket-cache"
+      };
+    }
 
-  async function fetchGarminImportPage() {
-    const response = await fetch(GARMIN_MODERN_IMPORT_URL, {
-      method: "GET",
-      credentials: "include"
-    });
-    const bodyText = await response.text().catch(() => "");
-    const contentType = response.headers.get("content-type") || "";
-    const token = extractGarminCsrfToken(bodyText);
-    const authRequired =
-      isGarminSignInUrl(response.url) ||
-      (seemsLikeAuthHtml(response.url, contentType, bodyText) && !token);
-
-    return {
-      status: response.status,
-      responseUrl: response.url,
-      contentType,
-      bodyText,
-      token,
-      authRequired
-    };
-  }
-
-  async function getGarminAuthState(forceRefresh = false, silent = false) {
-    if (!forceRefresh && garminState.garminCsrfTokenCache) {
+    if (garminState.garminCsrfTokenCache) {
       return {
         authenticated: true,
         token: garminState.garminCsrfTokenCache,
@@ -434,87 +463,232 @@
       };
     }
 
-    const page = await fetchGarminImportPage();
-    const token = page.token;
-    if (token) {
-      garminState.garminCsrfTokenCache = token;
+    try {
+      const ticketProbe = await fetchGarminSsoTicketFromSession();
+      return {
+        authenticated: true,
+        ticket: ticketProbe.ticket,
+        responseUrl: ticketProbe.responseUrl,
+        title: ticketProbe.title,
+        reason: "sso-ticket-probe"
+      };
+    } catch (error) {
+      const message = errorText(error);
+      if (!silent) {
+        await appendLog("warn", "Garmin SSO session is not authenticated", {
+          error: message
+        });
+      }
+      return {
+        authenticated: false,
+        error: message
+      };
     }
-
-    const authenticated = Boolean(token) && !page.authRequired;
-    const state = {
-      authenticated,
-      token: token || null,
-      status: page.status,
-      responseUrl: page.responseUrl,
-      contentType: page.contentType
-    };
-
-    if (!authenticated && !silent) {
-      await appendLog("warn", "Garmin session is not authenticated", {
-        status: page.status,
-        responseUrl: page.responseUrl,
-        contentType: page.contentType,
-        sample: page.bodyText.slice(0, 220)
-      });
-    }
-
-    return state;
   }
 
-  async function ensureGarminImportTab(active = false, useSignInUrl = false) {
-    const targetUrl = useSignInUrl ? GARMIN_SIGNIN_URL : GARMIN_MODERN_IMPORT_URL;
-    const tabs = await chromeTabsQuery({ url: ["https://connect.garmin.com/*"] });
-    const existing = tabs.find(
-      (tab) => typeof tab?.url === "string" && tab.url.includes("/modern/import-data")
-    );
+  function isGarminSsoEmbedTicketUrl(url) {
+    const text = String(url || "").toLowerCase();
+    return text.includes("sso.garmin.com/sso/embed") && text.includes("ticket=");
+  }
 
-    let tab;
-    if (existing?.id) {
-      tab = await chromeTabsUpdate(existing.id, { url: targetUrl, active });
-    } else {
-      tab = await chromeTabsCreate({ url: targetUrl, active });
+  async function setGarminAuthWaitStatus(message, phase) {
+    let progress = null;
+    try {
+      const state = await chrome.storage.local.get("syncProgress");
+      progress =
+        state?.syncProgress && typeof state.syncProgress === "object" ? state.syncProgress : null;
+    } catch (_) {
+      progress = null;
     }
 
-    if (!tab?.id) {
-      throw new Error("Could not open Garmin import tab");
+    await setUserStatus("running", message, {
+      syncInProgress: true,
+      syncProgress: {
+        ...(progress || {}),
+        phase
+      }
+    });
+  }
+
+  async function cleanupGarminAuthTab(authTab) {
+    if (!authTab || authTab.cleanupDone) {
+      return;
+    }
+    authTab.cleanupDone = true;
+
+    if (authTab.tabId) {
+      try {
+        await chromeTabsRemove(authTab.tabId);
+      } catch (_) {
+        // Ignore already-closed tab errors.
+      }
     }
 
-    await waitForTabComplete(tab.id, 90000);
-    return tab.id;
+    if (authTab.previousTabId) {
+      try {
+        await chromeTabsUpdate(authTab.previousTabId, { active: true });
+      } catch (_) {
+        // Ignore focus restore errors for tabs that no longer exist.
+      }
+    }
+  }
+
+  function watchGarminAuthTabForTicket(authTab) {
+    if (!authTab?.tabId) {
+      return () => {};
+    }
+
+    let active = true;
+    const cleanup = () => {
+      if (!active) {
+        return;
+      }
+      active = false;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+    };
+
+    const handleUrl = (url) => {
+      if (!active || !isGarminSsoEmbedTicketUrl(url)) {
+        return;
+      }
+
+      cleanup();
+      const ticket = extractGarminSsoTicket(url, "");
+      if (ticket) {
+        authTab.ticket = ticket;
+        authTab.ticketUrl = url;
+        setGarminSsoTicket(ticket, "interactive-auth-tab", url);
+      }
+      appendLog("info", "Garmin auth tab reached SSO embed ticket URL", {
+        url
+      }).catch(() => {});
+      cleanupGarminAuthTab(authTab).catch(() => {});
+    };
+
+    const onUpdated = (updatedTabId, changeInfo, tab) => {
+      if (updatedTabId !== authTab.tabId) {
+        return;
+      }
+      handleUrl(changeInfo.url || tab?.url || "");
+    };
+
+    const onRemoved = (removedTabId) => {
+      if (removedTabId !== authTab.tabId) {
+        return;
+      }
+      cleanup();
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    return cleanup;
+  }
+
+  async function probeGarminAuthTabTicket(authTab) {
+    if (!authTab?.tabId) {
+      return null;
+    }
+
+    let tab = null;
+    try {
+      tab = await chromeTabsGet(authTab.tabId);
+    } catch (_) {
+      return null;
+    }
+
+    const url = String(tab?.url || "");
+    if (!isGarminSsoEmbedTicketUrl(url)) {
+      return null;
+    }
+
+    const ticket = extractGarminSsoTicket(url, "");
+    if (!ticket) {
+      return null;
+    }
+
+    authTab.ticket = ticket;
+    authTab.ticketUrl = url;
+    setGarminSsoTicket(ticket, "interactive-auth-tab-url-poll", url);
+    await appendLog("info", "Garmin auth tab ticket captured from current tab URL", {
+      url
+    });
+    return {
+      authenticated: true,
+      ticket,
+      reason: "interactive-auth-tab-url"
+    };
+  }
+
+  async function openGarminAuthTab(active = false) {
+    const signInTargetUrl = `${GARMIN_SSO_SIGNIN_URL}?${buildGarminSsoSignInParams().toString()}`;
+    const [activeTab] = await chromeTabsQuery({
+      active: true,
+      lastFocusedWindow: true
+    });
+    const authTab = await chromeTabsCreate({
+      url: signInTargetUrl,
+      active
+    });
+
+    if (!authTab?.id) {
+      throw new Error("Could not open Garmin sign-in tab");
+    }
+
+    await waitForTabComplete(authTab.id, 90000);
+    return {
+      tabId: authTab.id,
+      previousTabId: activeTab?.id ?? null
+    };
   }
 
   async function ensureGarminAuthenticatedInteractive() {
-    const state = await getGarminAuthState(false, true);
+    const state = await getGarminSsoAuthState(true);
     if (state.authenticated) {
       await appendLog("info", "Garmin auth verified", {
-        source: state.reason || "import-page-check"
+        source: state.reason || "sso-ticket-probe"
       });
       return;
     }
 
     await appendLog("warn", "Garmin login required, opening sign-in tab", {
-      status: state.status ?? null,
-      responseUrl: state.responseUrl || ""
+      error: state.error || ""
     });
     notify("Garmin login required. Complete sign-in in opened tab.");
+    setGarminAuthWaitStatus("Waiting for Garmin login...", "waiting_garmin_login").catch(
+      () => {}
+    );
 
+    let authTab = null;
     try {
-      await ensureGarminImportTab(true, true);
+      authTab = await openGarminAuthTab(true);
     } catch (error) {
       throw new Error(`Could not open Garmin sign-in tab: ${errorText(error)}`);
     }
 
+    const stopWatchingAuthTab = watchGarminAuthTabForTicket(authTab);
     const startedAt = Date.now();
-    while (Date.now() - startedAt < GARMIN_AUTH_WAIT_TIMEOUT_MS) {
-      await wait(GARMIN_AUTH_POLL_INTERVAL_MS);
-      const probe = await getGarminAuthState(true, true);
-      if (probe.authenticated) {
-        await appendLog("info", "Garmin auth confirmed after interactive sign-in", {
-          waitedMs: Date.now() - startedAt
-        });
-        notify("Garmin login detected. Continuing sync...");
-        return;
+    try {
+      while (Date.now() - startedAt < GARMIN_AUTH_WAIT_TIMEOUT_MS) {
+        await wait(GARMIN_AUTH_POLL_INTERVAL_MS);
+        const directProbe = await probeGarminAuthTabTicket(authTab);
+        const probe = directProbe || (await getGarminSsoAuthState(true));
+        if (probe.authenticated) {
+          await cleanupGarminAuthTab(authTab);
+          setGarminAuthWaitStatus(
+            "Garmin login detected. Continuing sync...",
+            "resuming_after_garmin_login"
+          ).catch(() => {});
+          await appendLog("info", "Garmin auth confirmed after interactive sign-in", {
+            waitedMs: Date.now() - startedAt,
+            source: probe.reason || "sso-ticket-probe"
+          });
+          notify("Garmin login detected. Continuing sync...");
+          return;
+        }
       }
+    } finally {
+      stopWatchingAuthTab();
     }
 
     throw new Error("Garmin login not completed in time. Sign in on Garmin tab and retry.");
@@ -532,7 +706,14 @@
     }
 
     const tryIssueAuthorization = async (source) => {
-      const ticketProbe = await fetchGarminSsoTicketFromSession();
+      const cachedTicket = consumeFreshGarminSsoTicket();
+      const ticketProbe = cachedTicket
+        ? {
+            ticket: cachedTicket,
+            responseUrl: "interactive-auth-tab",
+            title: "interactive-auth-tab"
+          }
+        : await fetchGarminSsoTicketFromSession();
       const oauth1Token = await fetchGarminOAuth1Token(ticketProbe.ticket);
       const oauth2Token = await fetchGarminOAuth2Token(oauth1Token);
       await appendLog("info", "Garmin OAuth2 authorization issued", {
@@ -759,6 +940,7 @@
 
   Object.assign(MWG, {
     ensureGarminAuthenticatedInteractive,
+    resetGarminCaches,
     uploadOne
   });
 })();

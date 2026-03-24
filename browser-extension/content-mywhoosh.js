@@ -14,14 +14,6 @@ function collectMyWhooshAuth() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "SHOW_COPYABLE_TEXT") {
-    const text = String(message?.message || "");
-    console.log("MyWhoosh -> Garmin:", text);
-    window.prompt("MyWhoosh -> Garmin (copy):", text);
-    sendResponse({ ok: true });
-    return false;
-  }
-
   if (message?.type !== "COLLECT_MYWHOOSH_AUTH") {
     return undefined;
   }

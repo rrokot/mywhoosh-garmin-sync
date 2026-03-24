@@ -126,7 +126,16 @@
         status: response.status,
         detail
       });
-      throw new Error(`MyWhoosh API failed: HTTP ${response.status}${detail ? ` (${detail})` : ""}`);
+      const authLike =
+        response.status === 401 ||
+        response.status === 403 ||
+        /unauthorized|forbidden|invalid token|token expired|jwt|not logged in/i.test(detail);
+      const error = new Error(
+        `MyWhoosh API failed: HTTP ${response.status}${detail ? ` (${detail})` : ""}`
+      );
+      error.mywhooshAuth = authLike;
+      error.httpStatus = response.status;
+      throw error;
     }
 
     return data;

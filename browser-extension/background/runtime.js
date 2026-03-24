@@ -18,10 +18,12 @@
 
   const MYWHOOSH_ACTIVITIES_URL = "https://service14.mywhoosh.com/v2/rider/profile/activities";
   const MYWHOOSH_DOWNLOAD_URL = "https://service14.mywhoosh.com/v2/rider/profile/download-activity-file";
+  const MYWHOOSH_APP_ENTRY_URL = "https://event.mywhoosh.com/user/activities#profile";
   const MYWHOOSH_AES_KEY = "D9436E508087E863";
   const MYWHOOSH_DEFAULT_TYPE = "";
   const MYWHOOSH_DEFAULT_SORT = "DESC";
   const MYWHOOSH_MAX_PAGES = 100;
+  const MYWHOOSH_AUTH_STORAGE = "mywhooshAuth";
   const LOGS_STORAGE = "syncLogs";
   const LOGS_LIMIT = 600;
   const LOG_LINES_STORAGE = "syncLogLines";
@@ -328,6 +330,13 @@
     await chrome.storage.local.set({ [PROCESSED_KEYS_STORAGE]: map });
   }
 
+  function resetRuntimeCaches() {
+    logState.loaded = false;
+    logState.logs = [];
+    logState.lines = [];
+    logWriteQueue = Promise.resolve();
+  }
+
   async function ensureStrictStateMigration() {
     const state = await chrome.storage.local.get([
       SYNC_STATE_VERSION_STORAGE,
@@ -389,6 +398,30 @@
           return;
         }
         resolve(tab);
+      });
+    });
+  }
+
+  function chromeTabsGet(tabId) {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(tab || null);
+      });
+    });
+  }
+
+  function chromeTabsRemove(tabIds) {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.remove(tabIds, () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve();
       });
     });
   }
@@ -490,20 +523,49 @@
     return await sendMessageToTabWithRetry(tabId, { type: "COLLECT_MYWHOOSH_AUTH" });
   }
 
-  async function showCopyableText(tabId, message) {
-    if (!tabId) {
-      return;
+  function normalizeStoredMyWhooshAuth(auth) {
+    const webToken = String(auth?.webToken || "").trim();
+    if (!webToken) {
+      return null;
     }
 
-    try {
-      await sendMessageToTabWithRetry(tabId, {
-        type: "SHOW_COPYABLE_TEXT",
-        message: String(message || "")
-      });
-    } catch (error) {
-      await appendLog("warn", "Could not show copyable text in tab", {
-        tabId,
-        error: errorText(error)
+    return {
+      webToken,
+      pageUrl: String(auth?.pageUrl || "").trim(),
+      capturedAt: String(auth?.capturedAt || new Date().toISOString())
+    };
+  }
+
+  async function getStoredMyWhooshAuth() {
+    const data = await chrome.storage.local.get(MYWHOOSH_AUTH_STORAGE);
+    return normalizeStoredMyWhooshAuth(data?.[MYWHOOSH_AUTH_STORAGE]);
+  }
+
+  async function setStoredMyWhooshAuth(auth, source = "tab") {
+    const normalized = normalizeStoredMyWhooshAuth({
+      ...auth,
+      capturedAt: new Date().toISOString()
+    });
+    if (!normalized) {
+      return null;
+    }
+
+    await chrome.storage.local.set({
+      [MYWHOOSH_AUTH_STORAGE]: normalized
+    });
+    await appendLog("info", "Stored MyWhoosh auth token", {
+      source,
+      pageUrl: normalized.pageUrl,
+      length: normalized.webToken.length
+    });
+    return normalized;
+  }
+
+  async function clearStoredMyWhooshAuth(reason = "") {
+    await chrome.storage.local.remove(MYWHOOSH_AUTH_STORAGE);
+    if (reason) {
+      await appendLog("warn", "Cleared stored MyWhoosh auth token", {
+        reason
       });
     }
   }
@@ -524,7 +586,9 @@
     GARMIN_UPLOAD_STRATEGY,
     LOGS_STORAGE,
     LOG_LINES_STORAGE,
+    MYWHOOSH_AUTH_STORAGE,
     MYWHOOSH_ACTIVITIES_URL,
+    MYWHOOSH_APP_ENTRY_URL,
     MYWHOOSH_AES_KEY,
     MYWHOOSH_DEFAULT_SORT,
     MYWHOOSH_DEFAULT_TYPE,
@@ -536,12 +600,16 @@
     activityKey,
     appendLog,
     chromeTabsCreate,
+    chromeTabsGet,
     chromeTabsQuery,
+    chromeTabsRemove,
     chromeTabsUpdate,
+    clearStoredMyWhooshAuth,
     collectMyWhooshAuth,
     ensureStrictStateMigration,
     errorText,
     fitKey,
+    getStoredMyWhooshAuth,
     getProcessedKeysMap,
     hasUploadFailures,
     inferFilename,
@@ -550,11 +618,12 @@
     isMyWhooshUrl,
     looksLikeDuplicate,
     notify,
+    resetRuntimeCaches,
     saveLastError,
     seemsLikeAuthHtml,
+    setStoredMyWhooshAuth,
     setProcessedKeysMap,
     setUserStatus,
-    showCopyableText,
     wait,
     waitForTabComplete
   });
