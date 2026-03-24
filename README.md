@@ -60,13 +60,13 @@
 
 ```powershell
 cd C:\Users\rroko\PycharmProjects\mywhoosh-garmin-sync
-.\tail_extension_logs.bat
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1
 ```
 
 Полезные фильтры:
 
 ```powershell
-.\tail_extension_logs.bat -ErrorsOnly
-.\tail_extension_logs.bat -Tail 80
-.\tail_extension_logs.bat -SinceMinutes 30
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1 -ErrorsOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1 -Tail 80
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1 -SinceMinutes 30
 ```

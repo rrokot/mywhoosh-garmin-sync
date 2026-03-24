@@ -13,7 +13,7 @@
 - `browser-extension/background/service-worker.js`: sync orchestration and Chrome listeners.
 - `browser-extension/content-mywhoosh.js`: reads MyWhoosh auth from page storage.
 - `browser-extension/popup/popup.js` + `browser-extension/popup/popup.html`: UI actions and status.
-- `tools/tail_extension_logs.ps1` + `tail_extension_logs.bat`: debug log extraction.
+- `tools/tail_extension_logs.ps1`: debug log extraction.
 
 ## Working Rules
 - Keep Garmin upload path API-first (`connectapi`).
@@ -42,5 +42,5 @@
 3. Click extension icon and run `Sync New` or `Sync Latest`.
 4. If MyWhoosh or Garmin login is required, complete sign-in in the tab opened by the extension.
 5. If needed, inspect logs:
-   - `.\tail_extension_logs.bat`
-   - `.\tail_extension_logs.bat -ErrorsOnly`
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1`
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1 -ErrorsOnly`
