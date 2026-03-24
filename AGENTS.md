@@ -22,6 +22,13 @@
   - `latest` uploads only latest new activity.
 - Mark activity as processed only on `uploaded` or `duplicate`.
 - Preserve flat logs (`MWGLOG`) in `chrome.storage.local` for diagnostics.
+- Keep MyWhoosh auth flow token-based:
+  - use stored `mywhooshAuth` when valid
+  - if missing/expired, open interactive MyWhoosh login tab and continue automatically
+- Keep Garmin auth flow session-based:
+  - use current Chrome Garmin session
+  - if auth is missing, open interactive Garmin login tab and continue automatically
+- Do not reintroduce page `prompt()`-based UX on MyWhoosh pages.
 
 ## Validation Before Finish
 - Run:
@@ -32,8 +39,8 @@
 ## Manual Runtime Check
 1. Open `chrome://extensions`.
 2. Reload unpacked extension from `browser-extension/`.
-3. Open MyWhoosh activities page.
-4. Click extension icon and run sync.
+3. Click extension icon and run `Sync New` or `Sync Latest`.
+4. If MyWhoosh or Garmin login is required, complete sign-in in the tab opened by the extension.
 5. If needed, inspect logs:
    - `.\tail_extension_logs.bat`
    - `.\tail_extension_logs.bat -ErrorsOnly`
