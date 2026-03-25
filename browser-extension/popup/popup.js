@@ -21,7 +21,6 @@ const DOM = {
   metricDuplicate: document.getElementById("metric-duplicate"),
   metricFailed: document.getElementById("metric-failed"),
   metricProgress: document.getElementById("metric-progress"),
-  metricSkipped: document.getElementById("metric-skipped"),
   metricUploaded: document.getElementById("metric-uploaded"),
   progressCopy: document.getElementById("progress-copy"),
   progressMeta: document.getElementById("progress-meta"),
@@ -201,8 +200,7 @@ function buildViewModel(tab, data) {
     processed: "--",
     uploaded: "--",
     duplicate: "--",
-    failed: "--",
-    skipped: "--"
+    failed: "--"
   };
 
   if (syncInProgress && progress) {
@@ -224,8 +222,7 @@ function buildViewModel(tab, data) {
       processed: `${progress.current} / ${progress.total}`,
       uploaded: String(progress.uploaded),
       duplicate: String(progress.duplicate),
-      failed: String(progress.failed),
-      skipped: String(progress.skipped)
+      failed: String(progress.failed)
     };
   } else if (syncInProgress) {
     progressCopy = data?.syncStatusMessage || "Sync in progress.";
@@ -242,8 +239,7 @@ function buildViewModel(tab, data) {
       processed: `${summary.totalNew} / ${summary.totalNew}`,
       uploaded: String(summary.uploaded),
       duplicate: String(summary.duplicate),
-      failed: String(summary.failed),
-      skipped: String(summary.skipped)
+      failed: String(summary.failed)
     };
   } else if (data?.lastUserMessage) {
     progressCopy = data.lastUserMessage;
@@ -282,7 +278,6 @@ async function refreshView() {
   setMetric(DOM.metricUploaded, view.progressMetrics.uploaded);
   setMetric(DOM.metricDuplicate, view.progressMetrics.duplicate);
   setMetric(DOM.metricFailed, view.progressMetrics.failed);
-  setMetric(DOM.metricSkipped, view.progressMetrics.skipped);
   DOM.actionStatus.textContent = view.actionStatusText;
   DOM.actionStatus.className = `action-status action-status-${view.actionStatusTone}`;
 

@@ -248,7 +248,7 @@
     const failSuffix = firstFailed?.detail ? ` | first fail: ${firstFailed.detail}` : "";
     const noNewSuffix = Number(summary.totalNew || 0) <= 0 ? " | no new activities" : "";
 
-    return `Uploaded: ${summary.uploaded}, Duplicate: ${summary.duplicate}, Failed: ${summary.failed}, Skipped: ${summary.skipped}${migrationSuffix}${noNewSuffix}${failSuffix}`;
+    return `Uploaded: ${summary.uploaded}, Duplicate: ${summary.duplicate}, Failed: ${summary.failed}${migrationSuffix}${noNewSuffix}${failSuffix}`;
   }
 
   function createProgressReporter() {
@@ -285,7 +285,6 @@
         current,
         total,
         totalFound: summary.totalFound || 0,
-        skipped: summary.skipped || 0,
         uploaded: summary.uploaded || 0,
         duplicate: summary.duplicate || 0,
         failed: summary.failed || 0
@@ -298,8 +297,7 @@
         total,
         uploaded: summary.uploaded || 0,
         duplicate: summary.duplicate || 0,
-        failed: summary.failed || 0,
-        skipped: summary.skipped || 0
+        failed: summary.failed || 0
       });
       await setRunningStatus(text, {
         syncProgress: progressSnapshot
@@ -320,7 +318,6 @@
       totalFound: alreadyProcessedCount + selectedActivities.length,
       totalNew: selectedActivities.length,
       alreadyProcessed: alreadyProcessedCount,
-      skipped: 0,
       uploaded: 0,
       duplicate: 0,
       failed: 0,
