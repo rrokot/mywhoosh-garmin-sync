@@ -17,9 +17,8 @@
 
 ## Working Rules
 - Keep Garmin upload path API-first (`connectapi`).
-- Keep sync mode behavior:
-  - `new` uploads only not-yet-processed activities.
-  - `latest` uploads only latest new activity.
+- Keep sync behavior:
+  - `Sync` uploads only not-yet-processed activities.
 - Mark activity as processed only on `uploaded` or `duplicate`.
 - Preserve flat logs (`MWGLOG`) in `chrome.storage.local` for diagnostics.
 - Keep MyWhoosh auth flow token-based:
@@ -39,7 +38,7 @@
 ## Manual Runtime Check
 1. Open `chrome://extensions`.
 2. Reload unpacked extension from `browser-extension/`.
-3. Click extension icon and run `Sync New` or `Sync Latest`.
+3. Click extension icon and run `Sync`.
 4. If MyWhoosh or Garmin login is required, complete sign-in in the tab opened by the extension.
 5. If needed, inspect logs:
    - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1`

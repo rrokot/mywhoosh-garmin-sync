@@ -17,7 +17,6 @@ const DOM = {
   actionStatus: document.getElementById("action-status"),
   btnClearCache: document.getElementById("btn-clear-cache"),
   btnCopyLogs: document.getElementById("btn-copy-logs"),
-  btnLatest: document.getElementById("btn-latest"),
   btnNew: document.getElementById("btn-new"),
   metricDuplicate: document.getElementById("metric-duplicate"),
   metricFailed: document.getElementById("metric-failed"),
@@ -139,7 +138,7 @@ function buildFinishedStatusText(summary) {
   return "Sync complete.";
 }
 
-function selectLatestRunLines(lines) {
+function selectLastRunLines(lines) {
   if (!Array.isArray(lines) || lines.length === 0) {
     return [];
   }
@@ -288,17 +287,15 @@ async function refreshView() {
   DOM.actionStatus.className = `action-status action-status-${view.actionStatusTone}`;
 
   DOM.btnNew.disabled = !view.actionsEnabled;
-  DOM.btnLatest.disabled = !view.actionsEnabled;
   DOM.btnClearCache.disabled = !view.cacheClearEnabled;
 }
 
-async function start(mode) {
+async function start() {
   const tab = await getActiveTab();
   setActionStatus("", "muted");
 
   const response = await chrome.runtime.sendMessage({
     type: "START_SYNC",
-    mode,
     tabId: tab?.id ?? null
   });
 
@@ -321,9 +318,9 @@ async function copyLogs() {
     return;
   }
 
-  const latestRunLines = selectLatestRunLines(lines);
-  await copyText(latestRunLines.join("\n"));
-  setActionStatus(`Copied ${latestRunLines.length} log lines from latest run.`, "success");
+  const lastRunLines = selectLastRunLines(lines);
+  await copyText(lastRunLines.join("\n"));
+  setActionStatus(`Copied ${lastRunLines.length} log lines from last run.`, "success");
 }
 
 async function clearCache() {
@@ -358,11 +355,7 @@ function handleStorageChange(changes, areaName) {
 }
 
 DOM.btnNew?.addEventListener("click", () => {
-  start("new").catch((error) => setActionStatus(String(error?.message || error), "error"));
-});
-
-DOM.btnLatest?.addEventListener("click", () => {
-  start("latest").catch((error) => setActionStatus(String(error?.message || error), "error"));
+  start().catch((error) => setActionStatus(String(error?.message || error), "error"));
 });
 
 DOM.btnCopyLogs?.addEventListener("click", () => {

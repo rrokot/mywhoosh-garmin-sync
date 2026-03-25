@@ -20,7 +20,6 @@
     errorText,
     extractFileId,
     fetchAllMyWhooshActivities,
-    fetchLatestNewMyWhooshActivity,
     fetchMyWhooshDownloadUrl,
     getProcessedKeysMap,
     getStoredMyWhooshAuth,
@@ -46,14 +45,6 @@
       lastUserMessage: message,
       lastUserMessageAt: nowIso()
     };
-  }
-
-  function modeLabel(mode) {
-    return mode === "latest" ? "latest" : "new";
-  }
-
-  function modeText(mode, textNew, textLatest) {
-    return mode === "latest" ? textLatest : textNew;
   }
 
   function hasMyWhooshToken(auth) {
@@ -252,16 +243,15 @@
     });
   }
 
-  function buildSummaryMessage(summary, mode, migrationSuffix) {
+  function buildSummaryMessage(summary, migrationSuffix) {
     const firstFailed = summary.items.find((item) => item.status === "failed");
     const failSuffix = firstFailed?.detail ? ` | first fail: ${firstFailed.detail}` : "";
-    const latestSuffix = mode === "latest" ? " | mode: latest" : "";
     const noNewSuffix = Number(summary.totalNew || 0) <= 0 ? " | no new activities" : "";
 
-    return `Uploaded: ${summary.uploaded}, Duplicate: ${summary.duplicate}, Failed: ${summary.failed}, Skipped: ${summary.skipped}${latestSuffix}${migrationSuffix}${noNewSuffix}${failSuffix}`;
+    return `Uploaded: ${summary.uploaded}, Duplicate: ${summary.duplicate}, Failed: ${summary.failed}, Skipped: ${summary.skipped}${migrationSuffix}${noNewSuffix}${failSuffix}`;
   }
 
-  function createProgressReporter(mode) {
+  function createProgressReporter() {
     let lastProgressNotifiedAt = 0;
     let lastProgressCurrent = -1;
 
@@ -287,11 +277,11 @@
 
       const text =
         total <= 0
-          ? `Sync (${mode}): no activities`
-          : `Sync (${mode}): ${current}/${total} | Uploaded: ${summary.uploaded || 0}, Duplicate: ${summary.duplicate || 0}, Failed: ${summary.failed || 0}`;
+          ? "Sync: no activities"
+          : `Sync: ${current}/${total} | Uploaded: ${summary.uploaded || 0}, Duplicate: ${summary.duplicate || 0}, Failed: ${summary.failed || 0}`;
       const progressSnapshot = {
         phase,
-        mode,
+        mode: "new",
         current,
         total,
         totalFound: summary.totalFound || 0,
@@ -317,27 +307,16 @@
     };
   }
 
-  async function handleUploadNewMyWhooshActivities(token, onProgress = null, options = {}) {
+  async function handleUploadNewMyWhooshActivities(token, onProgress = null) {
     await appendLog("info", "MyWhoosh sync started");
-    const onlyLatest = Boolean(options?.onlyLatest);
     const processed = await getProcessedKeysMap();
-    let selectedActivities = [];
-    let alreadyProcessedCount = 0;
-
-    if (onlyLatest) {
-      const latestSelection = await fetchLatestNewMyWhooshActivity(token, processed);
-      selectedActivities = latestSelection.activity ? [latestSelection.activity] : [];
-      alreadyProcessedCount = Math.max(0, latestSelection.scannedCount - selectedActivities.length);
-    } else {
-      const activities = await fetchAllMyWhooshActivities(token);
-      const newActivities = activities.filter((activity) => !processed[activityKey(activity)]);
-      selectedActivities = newActivities;
-      alreadyProcessedCount = activities.length - selectedActivities.length;
-    }
+    const activities = await fetchAllMyWhooshActivities(token);
+    const selectedActivities = activities.filter((activity) => !processed[activityKey(activity)]);
+    const alreadyProcessedCount = activities.length - selectedActivities.length;
 
     const summary = {
       mode: "mywhoosh_api",
-      scope: onlyLatest ? "latest" : "new",
+      scope: "new",
       totalFound: alreadyProcessedCount + selectedActivities.length,
       totalNew: selectedActivities.length,
       alreadyProcessed: alreadyProcessedCount,
@@ -448,13 +427,12 @@
     return summary;
   }
 
-  async function runOneClickSync(tab, mode = "new") {
-    const normalizedMode = modeLabel(mode);
+  async function runOneClickSync(tab) {
     await appendLog("info", "Extension icon clicked", {
       tabUrl: tab?.url || "",
-      mode: normalizedMode
+      mode: "new"
     });
-    await setUserStatus("started", `Started (${normalizedMode})`, {
+    await setUserStatus("started", "Started (new)", {
       syncInProgress: true,
       syncProgress: null
     });
@@ -465,29 +443,19 @@
       migrationSuffix = ` | strict-state reset: ${migration.clearedKeys}`;
     }
 
-    notify(modeText(
-      normalizedMode,
-      "Sync started: checking MyWhoosh auth...",
-      "Sync started (latest): checking MyWhoosh auth..."
-    ));
-    await setRunningStatus(`Checking MyWhoosh auth (${normalizedMode})`);
+    notify("Sync started: checking MyWhoosh auth...");
+    await setRunningStatus("Checking MyWhoosh auth (new)");
 
     let myWhooshAuth = await resolveMyWhooshAuth(tab);
     if (!hasMyWhooshToken(myWhooshAuth)) {
       myWhooshAuth = await ensureMyWhooshAuthInteractive(tab);
     }
 
-    notify(modeText(
-      normalizedMode,
-      "Sync started: loading MyWhoosh activities...",
-      "Sync started (latest): loading MyWhoosh activities..."
-    ));
-    const onProgress = createProgressReporter(normalizedMode);
+    notify("Sync started: loading MyWhoosh activities...");
+    const onProgress = createProgressReporter();
     let summary;
     try {
-      summary = await handleUploadNewMyWhooshActivities(myWhooshAuth.webToken, onProgress, {
-        onlyLatest: normalizedMode === "latest"
-      });
+      summary = await handleUploadNewMyWhooshActivities(myWhooshAuth.webToken, onProgress);
     } catch (error) {
       if (!isMyWhooshAuthError(error)) {
         throw error;
@@ -516,17 +484,15 @@
       await appendLog("info", "Retrying sync with refreshed MyWhoosh auth", {
         previousSource: myWhooshAuth.source || ""
       });
-      summary = await handleUploadNewMyWhooshActivities(refreshedAuth.webToken, onProgress, {
-        onlyLatest: normalizedMode === "latest"
-      });
+      summary = await handleUploadNewMyWhooshActivities(refreshedAuth.webToken, onProgress);
     }
 
-    const message = buildSummaryMessage(summary, normalizedMode, migrationSuffix);
+    const message = buildSummaryMessage(summary, migrationSuffix);
     notify(message);
     await setTerminalStatus("finished", message);
   }
 
-  async function reportSyncFailure(tab, mode, error) {
+  async function reportSyncFailure(tab, error) {
     const message = errorText(error);
     const prefixedMessage = `Error: ${message}`;
     notify(prefixedMessage);
@@ -535,7 +501,7 @@
     appendLog("error", "Sync run failed", {
       message,
       tabUrl: tab?.url || "",
-      mode: modeLabel(mode)
+      mode: "new"
     }).catch(() => {});
   }
 
@@ -583,10 +549,9 @@
         rawTabId === null || rawTabId === undefined || rawTabId === ""
           ? null
           : Number(rawTabId);
-      const mode = message.mode === "latest" ? "latest" : "new";
       if (tabId === null) {
-        runOneClickSync(null, mode).catch((error) => {
-          reportSyncFailure(null, mode, error);
+        runOneClickSync(null).catch((error) => {
+          reportSyncFailure(null, error);
         });
         sendResponse({ ok: true });
         return false;
@@ -606,8 +571,8 @@
           return;
         }
 
-        runOneClickSync(tab, mode).catch((error) => {
-          reportSyncFailure(tab, mode, error);
+        runOneClickSync(tab).catch((error) => {
+          reportSyncFailure(tab, error);
         });
         sendResponse({ ok: true });
       });
@@ -627,7 +592,7 @@
 
   chrome.action.onClicked.addListener((tab) => {
     runOneClickSync(tab).catch((error) => {
-      reportSyncFailure(tab, "new", error);
+      reportSyncFailure(tab, error);
     });
   });
 })();

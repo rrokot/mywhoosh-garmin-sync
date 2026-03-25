@@ -180,49 +180,6 @@
     return unique;
   }
 
-  async function fetchLatestNewMyWhooshActivity(token, processed) {
-    const seenKeys = new Set();
-    let scannedCount = 0;
-    let page = 1;
-    let totalPages = 1;
-
-    while (page <= totalPages && page <= MYWHOOSH_MAX_PAGES) {
-      const normalized = await fetchMyWhooshActivitiesPage(token, page);
-      totalPages = Math.max(totalPages, normalized.totalPages || 1);
-
-      for (const activity of normalized.results || []) {
-        const key = activityKey(activity);
-        if (seenKeys.has(key)) {
-          continue;
-        }
-
-        seenKeys.add(key);
-        scannedCount += 1;
-        if (!processed[key]) {
-          await appendLog("info", "Latest new MyWhoosh activity found", {
-            key,
-            page,
-            scannedCount
-          });
-          return {
-            activity,
-            scannedCount
-          };
-        }
-      }
-
-      page += 1;
-    }
-
-    await appendLog("info", "No new MyWhoosh activity found for latest mode", {
-      scannedCount
-    });
-    return {
-      activity: null,
-      scannedCount
-    };
-  }
-
   async function fetchMyWhooshDownloadUrl(token, fileId) {
     const data = await requestMyWhooshApi(MYWHOOSH_DOWNLOAD_URL, token, { fileId });
     const url = resolveDownloadUrl(data);
@@ -237,7 +194,6 @@
   Object.assign(MWG, {
     extractFileId,
     fetchAllMyWhooshActivities,
-    fetchLatestNewMyWhooshActivity,
     fetchMyWhooshDownloadUrl
   });
 })();

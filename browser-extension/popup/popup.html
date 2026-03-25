@@ -8,7 +8,7 @@
   </head>
   <body>
     <main class="shell">
-      <section class="hero hero-compact">
+      <section class="hero">
         <div class="hero-row">
           <div class="hero-copy-block">
             <h1>MyWhoosh -> Garmin</h1>
@@ -22,17 +22,15 @@
       <section class="panel panel-main">
         <div class="action-grid">
           <button id="btn-new" class="action action-primary">
-            <span class="action-title">Sync New</span>
+            <span class="action-title">Sync</span>
             <span class="action-copy">All unseen</span>
           </button>
-          <button id="btn-latest" class="action action-secondary">
-            <span class="action-title">Sync Latest</span>
-            <span class="action-copy">Only newest</span>
-          </button>
         </div>
-        <p id="action-status" class="action-status" aria-live="polite"></p>
-        <p id="progress-copy" class="panel-copy">No sync running.</p>
-        <p id="progress-meta" class="panel-meta"></p>
+        <div class="status-surface">
+          <p id="action-status" class="action-status" aria-live="polite"></p>
+          <p id="progress-copy" class="panel-copy">No sync running.</p>
+          <p id="progress-meta" class="panel-meta"></p>
+        </div>
         <div class="metric-grid">
           <div class="metric">
             <span class="metric-label">Processed</span>

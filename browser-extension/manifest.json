@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MyWhoosh to Garmin Uploader",
-  "version": "0.2.49",
+  "version": "0.2.52",
   "description": "Upload MyWhoosh FIT activities to Garmin Connect using your current Chrome session.",
   "icons": {
     "128": "icons/icon-128.png"
