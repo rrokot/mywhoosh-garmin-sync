@@ -1,27 +1,27 @@
 # MyWhoosh -> Garmin
 
-Расширение Chrome для синхронизации тренировок из MyWhoosh в Garmin Connect.
+A Chrome extension that syncs workouts from MyWhoosh to Garmin Connect.
 
-## Установка
+## Installation
 
-1. Склонируй репозиторий или распакуй проект в любую папку на компьютере.
-2. Открой `chrome://extensions`.
-3. Включи `Developer mode`.
-4. Нажми `Load unpacked`.
-5. Выбери папку `browser-extension` из корня проекта.
+1. Clone the repository or extract the project into any folder on your computer.
+2. Open `chrome://extensions`.
+3. Enable `Developer mode`.
+4. Click `Load unpacked`.
+5. Select the `browser-extension` folder from the root of the project.
 
-## Использование
+## Usage
 
-1. Нажми иконку расширения.
-2. Нажми `Sync`.
-3. Если MyWhoosh или Garmin не авторизованы, расширение само откроет вкладку входа.
-4. Заверши логин в открытой вкладке. Sync продолжится автоматически.
-5. `Copy Debug Logs` копирует лог последнего запуска.
-6. `Clear Cache` очищает auth-кэш, processed-keys, статусы и логи.
+1. Click the extension icon.
+2. Click `Sync`.
+3. If MyWhoosh or Garmin is not authenticated, the extension will automatically open a login tab.
+4. Complete the login in the opened tab. Sync will continue automatically.
+5. `Copy Debug Logs` copies the log from the last run.
+6. `Clear Cache` clears the auth cache, processed keys, statuses, and logs.
 
-## Что показывает popup
+## Popup Status
 
-- `Processed` - сколько активностей уже прошло через текущий запуск
-- `Uploaded` - сколько активностей загружено в Garmin
-- `Duplicate` - сколько активностей Garmin уже знал
-- `Failed` - сколько активностей не удалось обработать
+- `Processed` — how many activities have been processed in the current run
+- `Uploaded` — how many activities were uploaded to Garmin
+- `Duplicate` — how many activities Garmin already knew about
+- `Failed` — how many activities could not be processed
