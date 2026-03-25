@@ -10,10 +10,6 @@
 4. Нажми `Load unpacked`.
 5. Выбери папку `browser-extension` из корня проекта.
 
-Пример:
-- если проект лежит в `C:\Projects\mywhoosh-garmin-sync`, то выбирать нужно `C:\Projects\mywhoosh-garmin-sync\browser-extension`
-- выбирать корень репозитория не нужно, потому что `manifest.json` находится внутри `browser-extension`
-
 ## Использование
 
 1. Нажми иконку расширения.
