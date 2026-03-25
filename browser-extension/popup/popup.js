@@ -118,26 +118,6 @@ function formatDateTime(value) {
   });
 }
 
-function formatMode(mode) {
-  return mode === "latest" ? "Latest" : "New";
-}
-
-function formatOutcome(status) {
-  if (status === "finished") {
-    return "Finished";
-  }
-  if (status === "error") {
-    return "Error";
-  }
-  if (status === "aborted") {
-    return "Aborted";
-  }
-  if (status === "running") {
-    return "Running";
-  }
-  return "Idle";
-}
-
 function buildFinishedStatusText(summary) {
   const totalNew = Number(summary?.totalNew || 0);
   const uploaded = Number(summary?.uploaded || 0);

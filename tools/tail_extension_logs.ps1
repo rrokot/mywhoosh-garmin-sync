@@ -1,5 +1,5 @@
 param(
-  [string]$ExtensionId = "cckacjkahfppnpmiammkdckpfanmjeki",
+  [string]$ExtensionId = "",
   [string]$Profile = "Default",
   [int]$Tail = 220,
   [int]$SinceMinutes = 0,
@@ -125,7 +125,57 @@ function Add-LogEntry {
   }
 }
 
-$logDir = Join-Path $env:LOCALAPPDATA ("Google\Chrome\User Data\{0}\Local Extension Settings\{1}" -f $Profile, $ExtensionId)
+function Resolve-ExtensionLogDir {
+  param(
+    [string]$Profile,
+    [string]$ExtensionId
+  )
+
+  $baseDir = Join-Path $env:LOCALAPPDATA ("Google\Chrome\User Data\{0}\Local Extension Settings" -f $Profile)
+  if (-not (Test-Path $baseDir)) {
+    Write-Host "Chrome profile log folder not found: $baseDir"
+    exit 1
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($ExtensionId)) {
+    return Join-Path $baseDir $ExtensionId
+  }
+
+  $detectedDirs = @()
+  $dirs = Get-ChildItem -Path $baseDir -Directory -ErrorAction SilentlyContinue
+  foreach ($dir in $dirs) {
+    $latestFile = Get-ChildItem -Path $dir.FullName -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match "^\d+\.(log|ldb)$" } |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1
+
+    if (-not $latestFile) {
+      continue
+    }
+
+    $text = Read-TextShared -Path $latestFile.FullName
+    if ($text -notmatch "MWGLOG\s+20\d{2}-\d{2}-\d{2}T") {
+      continue
+    }
+
+    $detectedDirs += [PSCustomObject]@{
+      ExtensionId  = $dir.Name
+      FullName     = $dir.FullName
+      LastWriteTime = $latestFile.LastWriteTime
+    }
+  }
+
+  if (-not $detectedDirs) {
+    Write-Host "Could not auto-detect extension log folder. Pass -ExtensionId explicitly."
+    exit 1
+  }
+
+  $selected = $detectedDirs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  Write-Host ("Auto-detected ExtensionId: {0}" -f $selected.ExtensionId)
+  return $selected.FullName
+}
+
+$logDir = Resolve-ExtensionLogDir -Profile $Profile -ExtensionId $ExtensionId
 if (-not (Test-Path $logDir)) {
   Write-Host "Log folder not found: $logDir"
   exit 1

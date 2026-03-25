@@ -1,7 +1,7 @@
 globalThis.MWG = globalThis.MWG || {};
 
 importScripts(
-  "lib/crypto-js.min.js",
+  "vendor/crypto-js.min.js",
   "background/runtime.js",
   "background/garmin.js",
   "background/mywhoosh.js",

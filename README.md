@@ -6,8 +6,9 @@
 
 - `browser-extension/` - unpacked Chrome extension
 - `browser-extension/background/` - service worker и модули sync/auth
+- `browser-extension/content/` - content scripts для MyWhoosh
 - `browser-extension/popup/` - popup UI
-- `browser-extension/content-mywhoosh.js` - чтение MyWhoosh auth из страницы
+- `browser-extension/vendor/` - внешние зависимости без build step
 - `tools/tail_extension_logs.ps1` - извлечение логов из storage расширения
 
 ## Установка
@@ -57,6 +58,8 @@
 4. Очисти `chrome.storage.local` для этого расширения.
 
 ## Просмотр логов в консоли
+
+Скрипт сам пытается найти актуальный `ExtensionId` по `MWGLOG`. Если нужно, можно передать `-ExtensionId` вручную.
 
 ```powershell
 cd C:\Users\rroko\PycharmProjects\mywhoosh-garmin-sync

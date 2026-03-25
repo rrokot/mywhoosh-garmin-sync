@@ -1,8 +1,5 @@
 (() => {
   const MWG = globalThis.MWG;
-  const GARMIN_MODERN_IMPORT_URL = "https://connect.garmin.com/modern/import-data";
-  const GARMIN_SIGNIN_URL =
-    "https://connect.garmin.com/signin/?service=" + encodeURIComponent(GARMIN_MODERN_IMPORT_URL);
   const GARMIN_CONNECTAPI_UPLOAD_URL = "https://connectapi.garmin.com/upload-service/upload";
   const GARMIN_SSO_BASE_URL = "https://sso.garmin.com/sso";
   const GARMIN_SSO_EMBED_URL = `${GARMIN_SSO_BASE_URL}/embed`;
@@ -497,7 +494,7 @@
   async function injectMyWhooshContentScript(tabId) {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content-mywhoosh.js"]
+      files: ["content/mywhoosh-auth.js"]
     });
   }
 
@@ -576,10 +573,8 @@
     GARMIN_AUTH_POLL_INTERVAL_MS,
     GARMIN_AUTH_WAIT_TIMEOUT_MS,
     GARMIN_CONNECTAPI_UPLOAD_URL,
-    GARMIN_MODERN_IMPORT_URL,
     GARMIN_OAUTH_CONSUMER_URL,
     GARMIN_OAUTH_USER_AGENT,
-    GARMIN_SIGNIN_URL,
     GARMIN_SSO_BASE_URL,
     GARMIN_SSO_EMBED_URL,
     GARMIN_SSO_SIGNIN_URL,

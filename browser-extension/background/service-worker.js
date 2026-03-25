@@ -472,7 +472,6 @@
     ));
     await setRunningStatus(`Checking MyWhoosh auth (${normalizedMode})`);
 
-    const tabReady = Boolean(tab?.id) && isMyWhooshUrl(tab.url);
     let myWhooshAuth = await resolveMyWhooshAuth(tab);
     if (!hasMyWhooshToken(myWhooshAuth)) {
       myWhooshAuth = await ensureMyWhooshAuthInteractive(tab);
