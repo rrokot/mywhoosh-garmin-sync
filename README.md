@@ -4,10 +4,15 @@
 
 ## Установка
 
-1. Открой `chrome://extensions`.
-2. Включи `Developer mode`.
-3. Нажми `Load unpacked`.
-4. Выбери папку: `C:\Users\rroko\PycharmProjects\mywhoosh-garmin-sync\browser-extension`.
+1. Склонируй репозиторий или распакуй проект в любую папку на компьютере.
+2. Открой `chrome://extensions`.
+3. Включи `Developer mode`.
+4. Нажми `Load unpacked`.
+5. Выбери папку `browser-extension` из корня проекта.
+
+Пример:
+- если проект лежит в `C:\Projects\mywhoosh-garmin-sync`, то выбирать нужно `C:\Projects\mywhoosh-garmin-sync\browser-extension`
+- выбирать корень репозитория не нужно, потому что `manifest.json` находится внутри `browser-extension`
 
 ## Использование
 
