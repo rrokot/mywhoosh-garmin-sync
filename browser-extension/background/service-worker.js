@@ -21,6 +21,8 @@
     extractFileId,
     fetchAllMyWhooshActivities,
     fetchMyWhooshDownloadUrl,
+    flushLogs,
+    getPendingActivityKeys,
     getProcessedKeysMap,
     getStoredMyWhooshAuth,
     isMyWhooshUrl,
@@ -28,6 +30,7 @@
     resetGarminCaches,
     resetRuntimeCaches,
     saveLastError,
+    setPendingActivityKeys,
     setStoredMyWhooshAuth,
     setProcessedKeysMap,
     setUserStatus,
@@ -35,6 +38,8 @@
     wait,
     waitForTabComplete
   } = MWG;
+
+  let activeSyncRun = null;
 
   function nowIso() {
     return new Date().toISOString();
@@ -243,6 +248,26 @@
     });
   }
 
+  // `summary.items` holds one entry per activity; logs only need the shape of
+  // the run plus the first failure.
+  function compactSummaryForLog(summary) {
+    const firstFailed = summary.items.find((item) => item.status === "failed");
+
+    return {
+      mode: summary.mode,
+      scope: summary.scope,
+      totalFound: summary.totalFound,
+      totalNew: summary.totalNew,
+      alreadyProcessed: summary.alreadyProcessed,
+      uploaded: summary.uploaded,
+      duplicate: summary.duplicate,
+      failed: summary.failed,
+      scannedPages: summary.scannedPages,
+      stoppedEarly: summary.stoppedEarly,
+      firstFailure: firstFailed ? `${firstFailed.fileId || firstFailed.key}: ${firstFailed.detail}` : ""
+    };
+  }
+
   function buildSummaryMessage(summary, migrationSuffix) {
     const firstFailed = summary.items.find((item) => item.status === "failed");
     const failSuffix = firstFailed?.detail ? ` | first fail: ${firstFailed.detail}` : "";
@@ -308,7 +333,15 @@
   async function handleUploadNewMyWhooshActivities(token, onProgress = null) {
     await appendLog("info", "MyWhoosh sync started");
     const processed = await getProcessedKeysMap();
-    const activities = await fetchAllMyWhooshActivities(token);
+    const pending = await getPendingActivityKeys();
+    const scan = await fetchAllMyWhooshActivities(token, {
+      isProcessed: (key) => Boolean(processed[key]),
+      pendingKeys: pending.keys,
+      // Until the pending set has been built once, a partial scan could hide an
+      // old activity that was seen but never uploaded.
+      allowEarlyStop: pending.ready
+    });
+    const activities = scan.activities;
     const selectedActivities = activities.filter((activity) => !processed[activityKey(activity)]);
     const alreadyProcessedCount = activities.length - selectedActivities.length;
 
@@ -321,6 +354,8 @@
       uploaded: 0,
       duplicate: 0,
       failed: 0,
+      scannedPages: scan.pagesRead,
+      stoppedEarly: scan.stoppedEarly,
       items: []
     };
 
@@ -332,7 +367,6 @@
       });
     }
 
-    let changed = false;
     if (typeof onProgress === "function") {
       await onProgress({
         phase: "uploading",
@@ -362,7 +396,9 @@
         }
 
         processed[key] = true;
-        changed = true;
+        // Persisted per activity: a worker restart mid-run must not drop the
+        // marks for everything already uploaded.
+        await setProcessedKeysMap(processed);
 
         summary.items.push({
           fileId,
@@ -403,15 +439,13 @@
       }
     }
 
-    if (changed) {
-      await setProcessedKeysMap(processed);
-    }
+    await savePendingActivityKeys(activities, processed, pending, scan);
 
     await chrome.storage.local.set({
       lastUploadSummary: summary,
       lastUploadAt: nowIso()
     });
-    await appendLog("info", "MyWhoosh sync finished", summary);
+    await appendLog("info", "MyWhoosh sync finished", compactSummaryForLog(summary));
     if (typeof onProgress === "function") {
       await onProgress({
         phase: "finished",
@@ -424,8 +458,33 @@
     return summary;
   }
 
+  // Keys that were listed but never uploaded. They keep the next scan going
+  // deep enough to retry them; a complete scan also prunes keys that MyWhoosh
+  // no longer returns (deleted activities).
+  async function savePendingActivityKeys(activities, processed, previousPending, scan) {
+    const nextPending = new Set();
+
+    if (!scan.completeScan) {
+      const seen = new Set(activities.map((activity) => activityKey(activity)));
+      for (const key of previousPending.keys) {
+        if (!seen.has(key)) {
+          nextPending.add(key);
+        }
+      }
+    }
+
+    for (const activity of activities) {
+      const key = activityKey(activity);
+      if (!processed[key]) {
+        nextPending.add(key);
+      }
+    }
+
+    await setPendingActivityKeys(Array.from(nextPending));
+  }
+
   async function runOneClickSync(tab) {
-    await appendLog("info", "Extension icon clicked", {
+    await appendLog("info", "Sync run started", {
       tabUrl: tab?.url || "",
       mode: "new"
     });
@@ -504,7 +563,7 @@
 
   async function clearExtensionCache() {
     const state = await chrome.storage.local.get("syncInProgress");
-    if (state?.syncInProgress) {
+    if (activeSyncRun || state?.syncInProgress) {
       throw new Error("Cannot clear cache while sync is running.");
     }
 
@@ -513,10 +572,24 @@
     await chrome.storage.local.clear();
   }
 
+  function beginSyncRun(tab) {
+    if (activeSyncRun) {
+      return false;
+    }
+
+    activeSyncRun = runOneClickSync(tab)
+      .catch((error) => reportSyncFailure(tab, error))
+      .finally(() => {
+        activeSyncRun = null;
+      });
+    return true;
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "GET_SYNC_LOG_LINES") {
-      chrome.storage.local
-        .get(LOG_LINES_STORAGE)
+      Promise.resolve(flushLogs())
+        .catch(() => {})
+        .then(() => chrome.storage.local.get(LOG_LINES_STORAGE))
         .then((data) => {
           sendResponse({
             ok: true,
@@ -525,7 +598,7 @@
         })
         .catch((error) => {
           sendResponse({ ok: false, error: errorText(error) });
-      });
+        });
       return true;
     }
 
@@ -541,15 +614,21 @@
     }
 
     if (message?.type === "START_SYNC") {
+      if (activeSyncRun) {
+        sendResponse({ ok: false, error: "Sync is already running." });
+        return false;
+      }
+
       const rawTabId = message.tabId;
       const tabId =
         rawTabId === null || rawTabId === undefined || rawTabId === ""
           ? null
           : Number(rawTabId);
       if (tabId === null) {
-        runOneClickSync(null).catch((error) => {
-          reportSyncFailure(null, error);
-        });
+        if (!beginSyncRun(null)) {
+          sendResponse({ ok: false, error: "Sync is already running." });
+          return false;
+        }
         sendResponse({ ok: true });
         return false;
       }
@@ -568,9 +647,10 @@
           return;
         }
 
-        runOneClickSync(tab).catch((error) => {
-          reportSyncFailure(tab, error);
-        });
+        if (!beginSyncRun(tab)) {
+          sendResponse({ ok: false, error: "Sync is already running." });
+          return;
+        }
         sendResponse({ ok: true });
       });
       return true;
@@ -586,10 +666,4 @@
         version: EXTENSION_VERSION
       }).catch(() => {})
     );
-
-  chrome.action.onClicked.addListener((tab) => {
-    runOneClickSync(tab).catch((error) => {
-      reportSyncFailure(tab, error);
-    });
-  });
 })();

@@ -159,25 +159,63 @@
     return normalized;
   }
 
-  async function fetchAllMyWhooshActivities(token) {
+  // Activities come back newest-first, so a page whose entries are all processed
+  // means every older page is processed too - as long as no earlier activity is
+  // still pending (previously seen but never uploaded).
+  async function fetchAllMyWhooshActivities(token, options = {}) {
+    const isProcessed = typeof options.isProcessed === "function" ? options.isProcessed : null;
+    const allowEarlyStop = Boolean(isProcessed) && options.allowEarlyStop !== false;
+    const awaitedKeys = new Set(options.pendingKeys || []);
     const all = [];
     let page = 1;
     let totalPages = 1;
+    let pagesRead = 0;
+    let stoppedEarly = false;
 
     while (page <= totalPages && page <= MYWHOOSH_MAX_PAGES) {
       const normalized = await fetchMyWhooshActivitiesPage(token, page);
       all.push(...normalized.results);
+      pagesRead += 1;
       totalPages = Math.max(totalPages, normalized.totalPages || 1);
+
+      let pageFullyProcessed = normalized.results.length > 0;
+      for (const activity of normalized.results) {
+        const key = activityKey(activity);
+        awaitedKeys.delete(key);
+        if (isProcessed && !isProcessed(key)) {
+          pageFullyProcessed = false;
+        }
+      }
+
       page += 1;
+      if (page > totalPages || page > MYWHOOSH_MAX_PAGES) {
+        break;
+      }
+
+      if (allowEarlyStop && pageFullyProcessed && awaitedKeys.size === 0) {
+        stoppedEarly = true;
+        break;
+      }
     }
 
+    const completeScan = !stoppedEarly && pagesRead >= Math.min(totalPages, MYWHOOSH_MAX_PAGES);
     const unique = uniqueActivities(all);
     await appendLog("info", "MyWhoosh activities fetch complete", {
       rawCount: all.length,
       uniqueCount: unique.length,
-      pagesRead: page - 1
+      pagesRead,
+      totalPages,
+      stoppedEarly,
+      completeScan
     });
-    return unique;
+
+    return {
+      activities: unique,
+      pagesRead,
+      totalPages,
+      stoppedEarly,
+      completeScan
+    };
   }
 
   async function fetchMyWhooshDownloadUrl(token, fileId) {
@@ -194,6 +232,9 @@
   Object.assign(MWG, {
     extractFileId,
     fetchAllMyWhooshActivities,
-    fetchMyWhooshDownloadUrl
+    fetchMyWhooshDownloadUrl,
+    normalizeActivitiesPayload,
+    resolveDownloadUrl,
+    uniqueActivities
   });
 })();

@@ -40,6 +40,8 @@
     garminSsoTicketCapturedAt: 0
   });
   const GARMIN_SSO_TICKET_MAX_AGE_MS = 2 * 60 * 1000;
+  const GARMIN_OAUTH_CONSUMER_STORAGE = "garminOauthConsumer";
+  const GARMIN_OAUTH_CONSUMER_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
   function isGarminBearer(value) {
     return /^Bearer\s+.+/i.test(String(value || "").trim());
@@ -151,9 +153,9 @@
     const parsedUrl = new URL(url);
     const oauthParams = {
       oauth_consumer_key: String(consumerKey),
-      oauth_nonce: generateOauthNonce(),
+      oauth_nonce: String(config.nonce || generateOauthNonce()),
       oauth_signature_method: "HMAC-SHA1",
-      oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+      oauth_timestamp: String(config.timestamp || Math.floor(Date.now() / 1000)),
       oauth_version: "1.0"
     };
     if (token) {
@@ -302,15 +304,46 @@
     throw new Error("Garmin SSO ticket not found");
   }
 
-  async function getGarminOauthConsumer() {
-    if (
-      garminState.garminOauthConsumerCache &&
-      typeof garminState.garminOauthConsumerCache.consumer_key === "string" &&
-      typeof garminState.garminOauthConsumerCache.consumer_secret === "string"
-    ) {
-      return garminState.garminOauthConsumerCache;
-    }
+  function isValidOauthConsumer(value) {
+    return Boolean(
+      value &&
+        typeof value.consumer_key === "string" &&
+        value.consumer_key !== "" &&
+        typeof value.consumer_secret === "string" &&
+        value.consumer_secret !== ""
+    );
+  }
 
+  async function readStoredGarminOauthConsumer() {
+    try {
+      const data = await chrome.storage.local.get(GARMIN_OAUTH_CONSUMER_STORAGE);
+      const stored = data?.[GARMIN_OAUTH_CONSUMER_STORAGE];
+      if (!isValidOauthConsumer(stored?.consumer)) {
+        return null;
+      }
+      return {
+        consumer: stored.consumer,
+        fetchedAt: Number(stored.fetchedAt || 0)
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function writeStoredGarminOauthConsumer(consumer) {
+    try {
+      await chrome.storage.local.set({
+        [GARMIN_OAUTH_CONSUMER_STORAGE]: {
+          consumer,
+          fetchedAt: Date.now()
+        }
+      });
+    } catch (_) {
+      // A missing cache only costs one extra request next time.
+    }
+  }
+
+  async function fetchGarminOauthConsumer() {
     const response = await fetch(GARMIN_OAUTH_CONSUMER_URL, {
       method: "GET",
       credentials: "omit"
@@ -328,16 +361,42 @@
     } catch (_) {
       parsed = null;
     }
-    if (
-      !parsed ||
-      typeof parsed.consumer_key !== "string" ||
-      typeof parsed.consumer_secret !== "string"
-    ) {
+    if (!isValidOauthConsumer(parsed)) {
       throw new Error("Garmin OAuth consumer payload is invalid");
     }
 
-    garminState.garminOauthConsumerCache = parsed;
     return parsed;
+  }
+
+  // The consumer keys live in a third-party bucket, so the last good copy is
+  // persisted and used as the fallback when that bucket is unreachable.
+  async function getGarminOauthConsumer() {
+    if (isValidOauthConsumer(garminState.garminOauthConsumerCache)) {
+      return garminState.garminOauthConsumerCache;
+    }
+
+    const stored = await readStoredGarminOauthConsumer();
+    if (stored && Date.now() - stored.fetchedAt < GARMIN_OAUTH_CONSUMER_MAX_AGE_MS) {
+      garminState.garminOauthConsumerCache = stored.consumer;
+      return stored.consumer;
+    }
+
+    try {
+      const consumer = await fetchGarminOauthConsumer();
+      garminState.garminOauthConsumerCache = consumer;
+      await writeStoredGarminOauthConsumer(consumer);
+      return consumer;
+    } catch (error) {
+      if (stored) {
+        await appendLog("warn", "Using stored Garmin OAuth consumer after fetch failure", {
+          error: errorText(error),
+          cachedAgeMs: Date.now() - stored.fetchedAt
+        });
+        garminState.garminOauthConsumerCache = stored.consumer;
+        return stored.consumer;
+      }
+      throw error;
+    }
   }
 
   async function fetchGarminOAuth1Token(ticket) {
@@ -785,19 +844,50 @@
     };
   }
 
+  function describeDownloadUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""));
+      return {
+        host: parsed.host,
+        // Presigned links carry the AWS signature in the query string, and logs
+        // are meant to be copied and shared, so only host+path are recorded.
+        path: parsed.pathname
+      };
+    } catch (_) {
+      return { host: "", path: "" };
+    }
+  }
+
   async function downloadFit(url, index) {
+    const target = describeDownloadUrl(url);
     await appendLog("info", "Downloading FIT file", {
       index,
-      url
+      host: target.host,
+      path: target.path
     });
 
-    const response = await fetch(url, {
+    // MyWhoosh hands out presigned S3 links: no cookies needed, and sending
+    // them to a third-party host would be gratuitous. Cookies are only retried
+    // if the host unexpectedly wants a session.
+    let response = await fetch(url, {
       method: "GET",
-      credentials: "include"
+      credentials: "omit"
     });
+
+    if (response.status === 401 || response.status === 403) {
+      await appendLog("warn", "FIT download rejected without cookies, retrying with session", {
+        index,
+        host: target.host,
+        status: response.status
+      });
+      response = await fetch(url, {
+        method: "GET",
+        credentials: "include"
+      });
+    }
 
     if (!response.ok) {
-      throw new Error(`Download failed: HTTP ${response.status}`);
+      throw new Error(`Download failed: HTTP ${response.status} @ ${target.host}`);
     }
 
     const filename = inferFilename(
@@ -939,7 +1029,12 @@
   }
 
   Object.assign(MWG, {
+    buildGarminOAuth1AuthorizationHeader,
+    encodeRfc3986,
     ensureGarminAuthenticatedInteractive,
+    extractGarminSsoTicket,
+    isGarminSsoEmbedTicketUrl,
+    parseHtmlTitle,
     resetGarminCaches,
     uploadOne
   });

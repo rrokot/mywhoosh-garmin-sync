@@ -289,6 +289,12 @@ h1 {
   color: var(--md-sys-color-on-surface-variant);
 }
 
+.utility-btn-danger {
+  color: var(--md-sys-color-error);
+  border-color: var(--md-sys-color-error);
+  font-weight: 600;
+}
+
 .action:focus-visible,
 .utility-btn:focus-visible {
   outline: 0;

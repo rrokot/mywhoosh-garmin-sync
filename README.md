@@ -17,7 +17,7 @@ A Chrome extension that syncs workouts from MyWhoosh to Garmin Connect.
 3. If MyWhoosh or Garmin is not authenticated, the extension will automatically open a login tab.
 4. Complete the login in the opened tab. Sync will continue automatically.
 5. `Copy Debug Logs` copies the log from the last run.
-6. `Clear Cache` clears the auth cache, processed keys, statuses, and logs.
+6. `Clear Cache` clears the auth cache, processed keys, statuses, and logs. Click it twice to confirm.
 
 ## Popup Status
 
@@ -25,3 +25,12 @@ A Chrome extension that syncs workouts from MyWhoosh to Garmin Connect.
 - `Uploaded` — how many activities were uploaded to Garmin
 - `Duplicate` — how many activities Garmin already knew about
 - `Failed` — how many activities could not be processed
+
+## Development
+
+- `npm run check` — syntax-checks every extension script.
+- `npm test` — runs the `node:test` suites in `tests/`.
+- `npm run verify` — both of the above; run this before committing.
+
+No dependencies are required: the tests load the real background modules in a
+`vm` sandbox with a stubbed Chrome API.

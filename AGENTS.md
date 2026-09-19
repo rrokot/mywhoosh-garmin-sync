@@ -14,13 +14,17 @@
 - `browser-extension/content/mywhoosh-auth.js`: reads MyWhoosh auth from page storage.
 - `browser-extension/popup/popup.js` + `browser-extension/popup/popup.html`: UI actions and status.
 - `tools/tail_extension_logs.ps1`: debug log extraction.
+- `tests/`: `node:test` suites for the pure helpers, loaded through `tests/harness.js` (vm sandbox + Chrome stub).
 
 ## Working Rules
 - Keep Garmin upload path API-first (`connectapi`).
 - Keep sync behavior:
   - `Sync` uploads only not-yet-processed activities.
 - Mark activity as processed only on `uploaded` or `duplicate`.
-- Preserve flat logs (`MWGLOG`) in `chrome.storage.local` for diagnostics.
+- Preserve flat logs (`MWGLOG`) in `chrome.storage.local` (`syncLogLines`) for diagnostics.
+- Keep log writes debounced; only `error` entries flush immediately.
+- Persist `processedFitKeys` per activity, not once at the end of a run.
+- Keep `host_permissions` narrow; do not reintroduce `<all_urls>`.
 - Keep MyWhoosh auth flow token-based:
   - use stored `mywhooshAuth` when valid
   - if missing/expired, open interactive MyWhoosh login tab and continue automatically
@@ -30,9 +34,10 @@
 - Do not reintroduce page `prompt()`-based UX on MyWhoosh pages.
 
 ## Validation Before Finish
-- Run:
-  - `node --check browser-extension/background.js`
-  - `node --check browser-extension/content/mywhoosh-auth.js`
+- Run `npm run verify`, which covers:
+  - `node --check` on every extension script (`background.js`, all `background/*.js`,
+    `content/mywhoosh-auth.js`, `popup/popup.js`)
+  - `node --test "tests/*.test.js"`
 - If extension behavior changed, bump `browser-extension/manifest.json` version.
 
 ## Manual Runtime Check

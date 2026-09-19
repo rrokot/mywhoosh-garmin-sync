@@ -1,0 +1,11 @@
+{
+  "name": "mywhoosh-garmin-sync",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Chrome extension that uploads MyWhoosh FIT activities to Garmin Connect.",
+  "scripts": {
+    "check": "node --check browser-extension/background.js && node --check browser-extension/background/runtime.js && node --check browser-extension/background/garmin.js && node --check browser-extension/background/mywhoosh.js && node --check browser-extension/background/service-worker.js && node --check browser-extension/content/mywhoosh-auth.js && node --check browser-extension/popup/popup.js",
+    "test": "node --test \"tests/*.test.js\"",
+    "verify": "npm run check && npm test"
+  }
+}

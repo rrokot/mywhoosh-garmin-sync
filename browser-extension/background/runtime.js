@@ -12,6 +12,7 @@
   const GARMIN_API_AUTH_MAX_AGE_MS = 15 * 60 * 1000;
   const PROCESSED_KEYS_STORAGE = "processedFitKeys";
   const NOTIFY_ICON = chrome.runtime.getURL("icons/icon-128.png");
+  const NOTIFY_STATUS_ID = "mwg-status";
 
   const MYWHOOSH_ACTIVITIES_URL = "https://service14.mywhoosh.com/v2/rider/profile/activities";
   const MYWHOOSH_DOWNLOAD_URL = "https://service14.mywhoosh.com/v2/rider/profile/download-activity-file";
@@ -21,21 +22,26 @@
   const MYWHOOSH_DEFAULT_SORT = "DESC";
   const MYWHOOSH_MAX_PAGES = 100;
   const MYWHOOSH_AUTH_STORAGE = "mywhooshAuth";
-  const LOGS_STORAGE = "syncLogs";
-  const LOGS_LIMIT = 600;
+  const LEGACY_LOGS_STORAGE = "syncLogs";
   const LOG_LINES_STORAGE = "syncLogLines";
   const LOG_LINES_LIMIT = 1200;
   const LOG_LINE_PREFIX = "MWGLOG";
   const LOG_LINE_DATA_MAX_LEN = 700;
+  const LOG_FLUSH_DELAY_MS = 400;
+  const PENDING_KEYS_STORAGE = "pendingActivityKeys";
+  const PENDING_KEYS_READY_STORAGE = "pendingActivityKeysReady";
   const SYNC_STATE_VERSION_STORAGE = "syncStateVersion";
   const SYNC_STATE_VERSION = 2;
   const EXTENSION_VERSION = chrome.runtime.getManifest().version;
   const logState = {
     loaded: false,
-    logs: [],
-    lines: []
+    lines: [],
+    lastEntryAt: "",
+    dirty: false
   };
-  let logWriteQueue = Promise.resolve();
+  let logFlushTimer = null;
+  let logFlushQueue = Promise.resolve();
+  let logLoadPromise = null;
 
   function errorText(error) {
     return error instanceof Error ? error.message : String(error);
@@ -83,30 +89,78 @@
     return dataText ? `${prefix} | ${dataText}` : prefix;
   }
 
-  async function ensureLogStateLoaded() {
+  // appendLog runs concurrently from several call sites, so the initial read is
+  // shared: two parallel loads would each overwrite logState.lines and drop the
+  // entries the other had already pushed.
+  function ensureLogStateLoaded() {
     if (logState.loaded) {
-      return;
+      return Promise.resolve();
+    }
+    if (logLoadPromise) {
+      return logLoadPromise;
     }
 
-    try {
-      const existingData = await chrome.storage.local.get([LOGS_STORAGE, LOG_LINES_STORAGE]);
-      logState.logs = Array.isArray(existingData?.[LOGS_STORAGE]) ? existingData[LOGS_STORAGE] : [];
-      logState.lines = Array.isArray(existingData?.[LOG_LINES_STORAGE]) ? existingData[LOG_LINES_STORAGE] : [];
-    } catch (_) {
-      logState.logs = [];
-      logState.lines = [];
-    }
+    logLoadPromise = (async () => {
+      let lines = [];
+      try {
+        const existingData = await chrome.storage.local.get(LOG_LINES_STORAGE);
+        lines = Array.isArray(existingData?.[LOG_LINES_STORAGE]) ? existingData[LOG_LINES_STORAGE] : [];
+      } catch (_) {
+        lines = [];
+      }
 
-    logState.loaded = true;
+      if (!logState.loaded) {
+        logState.lines = lines.concat(logState.lines);
+        logState.loaded = true;
+        chrome.storage.local.remove(LEGACY_LOGS_STORAGE).catch(() => {});
+      }
+    })();
+
+    return logLoadPromise;
   }
 
   function trimLogState() {
-    if (logState.logs.length > LOGS_LIMIT) {
-      logState.logs.splice(0, logState.logs.length - LOGS_LIMIT);
-    }
     if (logState.lines.length > LOG_LINES_LIMIT) {
       logState.lines.splice(0, logState.lines.length - LOG_LINES_LIMIT);
     }
+  }
+
+  function flushLogs() {
+    if (logFlushTimer) {
+      clearTimeout(logFlushTimer);
+      logFlushTimer = null;
+    }
+
+    logFlushQueue = logFlushQueue
+      .catch(() => {})
+      .then(async () => {
+        if (!logState.dirty) {
+          return;
+        }
+        logState.dirty = false;
+
+        try {
+          await chrome.storage.local.set({
+            [LOG_LINES_STORAGE]: logState.lines,
+            lastLogLine: logState.lines[logState.lines.length - 1] || "",
+            lastLogAt: logState.lastEntryAt
+          });
+        } catch (_) {
+          // Ignore storage errors for logs.
+        }
+      });
+
+    return logFlushQueue;
+  }
+
+  function scheduleLogFlush() {
+    if (logFlushTimer) {
+      return;
+    }
+    logFlushTimer = setTimeout(() => {
+      logFlushTimer = null;
+      flushLogs();
+    }, LOG_FLUSH_DELAY_MS);
   }
 
   async function appendLog(level, message, data) {
@@ -114,34 +168,26 @@
       at: new Date().toISOString(),
       level: String(level || "info"),
       message: String(message || ""),
-      data: null
+      data: data === undefined ? null : cloneLogData(data)
     };
 
-    if (data !== undefined) {
-      entry.data = cloneLogData(data);
+    try {
+      await ensureLogStateLoaded();
+    } catch (_) {
+      // Keep logging in memory even if the previous buffer could not be read.
     }
 
-    logWriteQueue = logWriteQueue
-      .catch(() => {})
-      .then(async () => {
-        try {
-          await ensureLogStateLoaded();
-          logState.logs.push(entry);
-          logState.lines.push(buildFlatLogLine(entry));
-          trimLogState();
+    logState.lines.push(buildFlatLogLine(entry));
+    logState.lastEntryAt = entry.at;
+    logState.dirty = true;
+    trimLogState();
 
-          await chrome.storage.local.set({
-            [LOGS_STORAGE]: logState.logs,
-            [LOG_LINES_STORAGE]: logState.lines,
-            lastLogLine: logState.lines[logState.lines.length - 1] || "",
-            lastLogAt: entry.at
-          });
-        } catch (_) {
-          // Ignore storage errors for logs.
-        }
-      });
+    if (entry.level === "error") {
+      await flushLogs();
+      return;
+    }
 
-    await logWriteQueue;
+    scheduleLogFlush();
   }
 
   async function saveLastError(message) {
@@ -163,9 +209,10 @@
     await chrome.storage.local.set(payload);
   }
 
-  function notify(message) {
+  function notify(message, notificationId = NOTIFY_STATUS_ID) {
     try {
       chrome.notifications.create(
+        notificationId,
         {
           type: "basic",
           iconUrl: NOTIFY_ICON,
@@ -327,11 +374,34 @@
     await chrome.storage.local.set({ [PROCESSED_KEYS_STORAGE]: map });
   }
 
+  async function getPendingActivityKeys() {
+    const data = await chrome.storage.local.get([PENDING_KEYS_STORAGE, PENDING_KEYS_READY_STORAGE]);
+    const keys = Array.isArray(data?.[PENDING_KEYS_STORAGE]) ? data[PENDING_KEYS_STORAGE] : [];
+
+    return {
+      keys: keys.map((key) => String(key)).filter((key) => key !== ""),
+      ready: data?.[PENDING_KEYS_READY_STORAGE] === true
+    };
+  }
+
+  async function setPendingActivityKeys(keys) {
+    await chrome.storage.local.set({
+      [PENDING_KEYS_STORAGE]: Array.from(new Set(keys || [])).map((key) => String(key)),
+      [PENDING_KEYS_READY_STORAGE]: true
+    });
+  }
+
   function resetRuntimeCaches() {
+    if (logFlushTimer) {
+      clearTimeout(logFlushTimer);
+      logFlushTimer = null;
+    }
     logState.loaded = false;
-    logState.logs = [];
+    logLoadPromise = null;
     logState.lines = [];
-    logWriteQueue = Promise.resolve();
+    logState.lastEntryAt = "";
+    logState.dirty = false;
+    logFlushQueue = Promise.resolve();
   }
 
   async function ensureStrictStateMigration() {
@@ -350,6 +420,8 @@
 
     await chrome.storage.local.set({
       [PROCESSED_KEYS_STORAGE]: {},
+      [PENDING_KEYS_STORAGE]: [],
+      [PENDING_KEYS_READY_STORAGE]: false,
       [SYNC_STATE_VERSION_STORAGE]: SYNC_STATE_VERSION,
       strictStateMigratedAt: new Date().toISOString()
     });
@@ -579,7 +651,6 @@
     GARMIN_SSO_EMBED_URL,
     GARMIN_SSO_SIGNIN_URL,
     GARMIN_UPLOAD_STRATEGY,
-    LOGS_STORAGE,
     LOG_LINES_STORAGE,
     MYWHOOSH_AUTH_STORAGE,
     MYWHOOSH_ACTIVITIES_URL,
@@ -589,6 +660,7 @@
     MYWHOOSH_DEFAULT_TYPE,
     MYWHOOSH_DOWNLOAD_URL,
     MYWHOOSH_MAX_PAGES,
+    PENDING_KEYS_STORAGE,
     PROCESSED_KEYS_STORAGE,
     SYNC_STATE_VERSION,
     SYNC_STATE_VERSION_STORAGE,
@@ -604,6 +676,8 @@
     ensureStrictStateMigration,
     errorText,
     fitKey,
+    flushLogs,
+    getPendingActivityKeys,
     getStoredMyWhooshAuth,
     getProcessedKeysMap,
     hasUploadFailures,
@@ -616,6 +690,7 @@
     resetRuntimeCaches,
     saveLastError,
     seemsLikeAuthHtml,
+    setPendingActivityKeys,
     setStoredMyWhooshAuth,
     setProcessedKeysMap,
     setUserStatus,

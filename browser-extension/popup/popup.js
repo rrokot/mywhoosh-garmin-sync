@@ -33,7 +33,12 @@ const transientStatus = {
   text: "",
   tone: "muted"
 };
-const RUN_START_MARKER = "[info] Extension icon clicked";
+const CLEAR_CACHE_CONFIRM_TIMEOUT_MS = 5000;
+const clearCacheConfirm = {
+  armed: false,
+  timer: null
+};
+const RUN_START_MARKER = "[info] Sync run started";
 const STALE_RUNNING_MS = 5 * 60 * 1000;
 
 function isMyWhooshUrl(url) {
@@ -283,6 +288,9 @@ async function refreshView() {
 
   DOM.btnNew.disabled = !view.actionsEnabled;
   DOM.btnClearCache.disabled = !view.cacheClearEnabled;
+  if (clearCacheConfirm.armed && !view.cacheClearEnabled) {
+    disarmClearCache();
+  }
 }
 
 async function start() {
@@ -318,14 +326,39 @@ async function copyLogs() {
   setActionStatus(`Copied ${lastRunLines.length} log lines from last run.`, "success");
 }
 
-async function clearCache() {
-  const confirmed = window.confirm(
-    "Clear extension cache, processed activities, statuses, and logs?"
+function disarmClearCache() {
+  if (clearCacheConfirm.timer) {
+    clearTimeout(clearCacheConfirm.timer);
+    clearCacheConfirm.timer = null;
+  }
+  clearCacheConfirm.armed = false;
+  DOM.btnClearCache.textContent = "Clear Cache";
+  DOM.btnClearCache.classList.remove("utility-btn-danger");
+}
+
+function armClearCache() {
+  clearCacheConfirm.armed = true;
+  DOM.btnClearCache.textContent = "Confirm Clear";
+  DOM.btnClearCache.classList.add("utility-btn-danger");
+  setActionStatus(
+    "This clears processed activities, auth cache, statuses and logs. Click again to confirm.",
+    "muted"
   );
-  if (!confirmed) {
+  clearCacheConfirm.timer = setTimeout(() => {
+    disarmClearCache();
+    setActionStatus("", "muted");
+  }, CLEAR_CACHE_CONFIRM_TIMEOUT_MS);
+}
+
+// A window.confirm() modal is unreliable inside an MV3 popup: it can dismiss
+// the popup and kill the pending handler, so the confirmation is inline.
+async function clearCache() {
+  if (!clearCacheConfirm.armed) {
+    armClearCache();
     return;
   }
 
+  disarmClearCache();
   const response = await chrome.runtime.sendMessage({ type: "CLEAR_EXTENSION_CACHE" });
   if (!response?.ok) {
     setActionStatus(response?.error || "Could not clear cache.", "error");
@@ -349,6 +382,9 @@ function handleStorageChange(changes, areaName) {
   }
 }
 
+DOM.btnCopyLogs?.addEventListener("click", disarmClearCache);
+DOM.btnNew?.addEventListener("click", disarmClearCache);
+
 DOM.btnNew?.addEventListener("click", () => {
   start().catch((error) => setActionStatus(String(error?.message || error), "error"));
 });
@@ -362,7 +398,7 @@ DOM.btnClearCache?.addEventListener("click", () => {
 });
 
 chrome.storage.onChanged.addListener(handleStorageChange);
-window.addEventListener("unload", () => {
+window.addEventListener("pagehide", () => {
   chrome.storage.onChanged.removeListener(handleStorageChange);
 });
 
