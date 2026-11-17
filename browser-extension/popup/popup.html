@@ -1,60 +1,34 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MyWhoosh -> Garmin</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <main class="shell">
-      <section class="hero">
-        <div class="hero-row">
-          <div class="hero-copy-block">
-            <h1>MyWhoosh -> Garmin</h1>
-          </div>
-          <span id="state-badge" class="badge badge-neutral">Checking</span>
-        </div>
-        <p id="state-copy" class="hero-copy" aria-live="polite">Checking current state...</p>
-        <p id="state-meta" class="hero-meta">Checking tab...</p>
-      </section>
-
-      <section class="panel panel-main">
-        <div class="action-grid">
-          <button id="btn-new" class="action action-primary">
-            <span class="action-title">Sync</span>
-            <span class="action-copy">All unseen</span>
-          </button>
-        </div>
-        <div class="status-surface">
-          <p id="action-status" class="action-status" aria-live="polite"></p>
-          <p id="progress-copy" class="panel-copy">No sync running.</p>
-          <p id="progress-meta" class="panel-meta"></p>
-        </div>
-        <div class="metric-grid">
-          <div class="metric">
-            <span class="metric-label">Processed</span>
-            <strong id="metric-progress" class="metric-value">--</strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Uploaded</span>
-            <strong id="metric-uploaded" class="metric-value">--</strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Duplicate</span>
-            <strong id="metric-duplicate" class="metric-value">--</strong>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Failed</span>
-            <strong id="metric-failed" class="metric-value">--</strong>
-          </div>
-        </div>
-        <div class="utility-grid">
-          <button id="btn-copy-logs" class="utility-btn">Copy Debug Logs</button>
-          <button id="btn-clear-cache" class="utility-btn utility-btn-secondary">Clear Cache</button>
-        </div>
-      </section>
-    </main>
-    <script src="popup.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyWhoosh to Garmin</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="shell">
+    <button id="btn-new" class="sync-button" type="button" aria-label="Upload MyWhoosh activities to Garmin" disabled>
+      <span>MyWhoosh</span>
+      <svg viewBox="0 0 32 16" aria-hidden="true"><path d="M1 8h29M23 1l7 7-7 7" /></svg>
+      <span>Garmin</span>
+    </button>
+    <section id="sync-result" class="sync-result" aria-labelledby="progress-copy" role="status" aria-live="polite" aria-atomic="true" hidden>
+      <div class="result-copy">
+        <h2 id="progress-copy"></h2>
+        <p id="progress-meta" class="result-meta"></p>
+      </div>
+      <progress id="sync-progress" class="sync-progress" max="1" value="0" aria-label="Activities processed" hidden></progress>
+    </section>
+    <details id="advanced-tools" class="advanced-tools">
+      <summary aria-label="Advanced"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg></summary>
+      <div class="advanced-content">
+        <button id="btn-copy-logs" class="utility-btn" type="button">Copy logs</button>
+        <button id="btn-clear-cache" class="utility-btn" type="button">Clear Cache</button>
+      </div>
+    </details>
+    <p id="action-status" class="action-status action-status-muted" role="status" aria-live="polite"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
 </html>
