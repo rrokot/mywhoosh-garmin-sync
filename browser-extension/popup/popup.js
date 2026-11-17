@@ -5,7 +5,6 @@ const STORAGE_KEYS = [
   "lastUploadSummary",
   "lastUserMessage",
   "lastUserMessageAt",
-  "mywhooshAuth",
   "syncStatusAt",
   "syncInProgress",
   "syncProgress",
@@ -18,41 +17,23 @@ const DOM = {
   btnClearCache: document.getElementById("btn-clear-cache"),
   btnCopyLogs: document.getElementById("btn-copy-logs"),
   btnNew: document.getElementById("btn-new"),
-  metricDuplicate: document.getElementById("metric-duplicate"),
-  metricFailed: document.getElementById("metric-failed"),
-  metricProgress: document.getElementById("metric-progress"),
-  metricUploaded: document.getElementById("metric-uploaded"),
+  progressBar: document.getElementById("sync-progress"),
+  progressSection: document.getElementById("sync-result"),
   progressCopy: document.getElementById("progress-copy"),
-  progressMeta: document.getElementById("progress-meta"),
-  stateBadge: document.getElementById("state-badge"),
-  stateCopy: document.getElementById("state-copy"),
-  stateMeta: document.getElementById("state-meta")
+  progressMeta: document.getElementById("progress-meta")
 };
 
 const transientStatus = {
   text: "",
   tone: "muted"
 };
-const CLEAR_CACHE_CONFIRM_TIMEOUT_MS = 5000;
+const CLEAR_CACHE_CONFIRM_TIMEOUT_MS = 30000;
 const clearCacheConfirm = {
   armed: false,
   timer: null
 };
 const RUN_START_MARKER = "[info] Sync run started";
 const STALE_RUNNING_MS = 5 * 60 * 1000;
-
-function isMyWhooshUrl(url) {
-  if (!url) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname === "event.mywhoosh.com" || parsed.hostname.endsWith(".mywhoosh.com");
-  } catch (_) {
-    return false;
-  }
-}
 
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -93,15 +74,6 @@ function setActionStatus(text, tone = "muted") {
   DOM.actionStatus.className = `action-status action-status-${transientStatus.tone}`;
 }
 
-function setMetric(element, value) {
-  element.textContent = value;
-}
-
-function setBadge(label, tone) {
-  DOM.stateBadge.textContent = label;
-  DOM.stateBadge.className = `badge badge-${tone}`;
-}
-
 function formatDateTime(value) {
   if (!value) {
     return "";
@@ -121,25 +93,9 @@ function formatDateTime(value) {
   });
 }
 
-function buildFinishedStatusText(summary) {
-  const totalNew = Number(summary?.totalNew || 0);
-  const uploaded = Number(summary?.uploaded || 0);
-  const duplicate = Number(summary?.duplicate || 0);
-  const failed = Number(summary?.failed || 0);
-
-  if (totalNew <= 0) {
-    return "No new activities.";
-  }
-  if (uploaded > 0 && duplicate === 0 && failed === 0) {
-    return "Upload complete.";
-  }
-  if (duplicate > 0 && uploaded === 0 && failed === 0) {
-    return "Already in Garmin.";
-  }
-  if (failed > 0 && uploaded === 0 && duplicate === 0) {
-    return "Sync failed.";
-  }
-  return "Sync complete.";
+function activityCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
 }
 
 function selectLastRunLines(lines) {
@@ -157,140 +113,74 @@ function selectLastRunLines(lines) {
   return lines.slice(-80);
 }
 
-function buildViewModel(tab, data) {
-  const hasTab = Boolean(tab?.id);
-  const tabReady = hasTab && isMyWhooshUrl(tab.url || "");
-  const hasStoredMyWhooshAuth = Boolean(String(data?.mywhooshAuth?.webToken || "").trim());
-  const syncStatusAt = Date.parse(String(data?.syncStatusAt || ""));
-  const hasValidSyncStatusAt = Number.isFinite(syncStatusAt);
-  const syncStateAgeMs = hasValidSyncStatusAt ? Date.now() - syncStatusAt : 0;
-  const staleRunning = Boolean(data?.syncInProgress) && hasValidSyncStatusAt && syncStateAgeMs > STALE_RUNNING_MS;
-  const syncInProgress = Boolean(data?.syncInProgress) && !staleRunning;
-  const syncStatus = String(data?.syncStatus || "");
-  const progress =
-    data?.syncProgress && typeof data.syncProgress === "object" ? data.syncProgress : null;
-  const progressPhase = String(progress?.phase || "");
-  const summary =
-    data?.lastUploadSummary && typeof data.lastUploadSummary === "object"
-      ? data.lastUploadSummary
-      : null;
-
-  let stateBadgeLabel = "Ready";
-  let stateBadgeTone = "ready";
-  let stateCopy = "";
-  let stateMeta = "";
-
-  if (syncInProgress) {
-    stateBadgeLabel = "Running";
-    stateBadgeTone = "running";
-    stateCopy = data?.syncStatusMessage || "Sync in progress.";
-    stateMeta = hasStoredMyWhooshAuth && !tabReady ? "Saved MyWhoosh session" : "";
-  } else if (staleRunning) {
-    stateBadgeLabel = "Ready";
-    stateBadgeTone = "ready";
-    stateCopy = "Previous sync was interrupted. Start again.";
-  } else if (!hasStoredMyWhooshAuth && !tabReady) {
-    stateBadgeLabel = "Login Needed";
-    stateBadgeTone = "blocked";
-    stateCopy = "Click sync to open MyWhoosh login.";
-  } else if (data?.syncStatus === "error") {
-    stateCopy = "Ready to sync again. The previous run ended with an error.";
-  } else if (data?.syncStatus === "aborted") {
-    stateCopy = "Ready to sync again. The previous run was aborted.";
-  }
-
-  let progressCopy = "No sync running.";
+function buildViewModel(_tab, data = {}) {
+  const statusAt = Date.parse(String(data.syncStatusAt || ""));
+  const stale = Boolean(data.syncInProgress) && Number.isFinite(statusAt) && Date.now() - statusAt > STALE_RUNNING_MS;
+  const running = Boolean(data.syncInProgress) && !stale;
+  const status = String(data.syncStatus || "");
+  const progress = data.syncProgress || {};
+  const summary = data.lastUploadSummary;
+  const phase = String(progress.phase || "");
+  const hasCounters = progress.current != null && progress.total != null &&
+    Number.isFinite(Number(progress.current)) && Number.isFinite(Number(progress.total));
+  const total = activityCount(progress.total);
+  const current = Math.min(activityCount(progress.current), total);
+  let progressCopy = "";
   let progressMeta = "";
-  let progressMetrics = {
-    processed: "--",
-    uploaded: "--",
-    duplicate: "--",
-    failed: "--"
-  };
+  let tone = "neutral";
+  let showProgress = false;
 
-  if (syncInProgress && progress) {
-    if (progressPhase === "waiting_garmin_login") {
-      progressCopy = "Waiting for Garmin login...";
-      progressMeta = "Complete sign-in in opened Garmin tab.";
-    } else if (progressPhase === "waiting_mywhoosh_login") {
-      progressCopy = "Waiting for MyWhoosh login...";
-      progressMeta = "Complete sign-in in opened MyWhoosh tab.";
-    } else if (progressPhase === "resuming_after_garmin_login") {
-      progressCopy = "Garmin login detected. Continuing sync...";
-    } else if (progressPhase === "resuming_after_mywhoosh_login") {
-      progressCopy = "MyWhoosh login detected. Continuing sync...";
+  if (running) {
+    if (phase === "waiting_garmin_login" || phase === "waiting_mywhoosh_login") {
+      const service = phase === "waiting_garmin_login" ? "Garmin" : "MyWhoosh";
+      progressCopy = `Sign in to ${service} in the opened tab.`;
+    } else if (phase.includes("login")) {
+      progressCopy = "Continuing…";
     } else {
-      progressCopy = data?.syncStatusMessage || "Sync in progress.";
-      progressMeta = `${progress.current} of ${progress.total} processed`;
+      progressCopy = hasCounters && total > 0 ? `${current} / ${total} processed` : "Checking activities…";
+      showProgress = hasCounters && total > 0 && phase === "uploading";
     }
-    progressMetrics = {
-      processed: `${progress.current} / ${progress.total}`,
-      uploaded: String(progress.uploaded),
-      duplicate: String(progress.duplicate),
-      failed: String(progress.failed)
-    };
-  } else if (syncInProgress) {
-    progressCopy = data?.syncStatusMessage || "Sync in progress.";
-  } else if ((syncStatus === "error" || syncStatus === "aborted") && data?.lastUserMessage) {
-    progressCopy = data.lastUserMessage;
-    progressMeta = formatDateTime(data?.lastUserMessageAt || data?.lastErrorAt);
-  } else if (staleRunning) {
-    progressCopy = "Previous sync was interrupted.";
-    progressMeta = hasValidSyncStatusAt ? formatDateTime(syncStatusAt) : "";
-  } else if (summary && (syncStatus === "finished" || !syncStatus)) {
-    progressCopy = buildFinishedStatusText(summary);
-    progressMeta = formatDateTime(data?.lastUploadAt || data?.lastUserMessageAt) || "";
-    progressMetrics = {
-      processed: `${summary.totalNew} / ${summary.totalNew}`,
-      uploaded: String(summary.uploaded),
-      duplicate: String(summary.duplicate),
-      failed: String(summary.failed)
-    };
-  } else if (data?.lastUserMessage) {
-    progressCopy = data.lastUserMessage;
-    progressMeta = formatDateTime(data?.lastUserMessageAt || data?.lastErrorAt);
+    tone = "running";
+  } else if (stale || status === "aborted") {
+    progressCopy = "Sync interrupted";
+    tone = "warning";
+  } else if (status === "error") {
+    progressCopy = "Sync failed";
+    progressMeta = String(data.lastUserMessage || data.lastError || "").replace(/^Error:\s*/i, "");
+    if (progressMeta === progressCopy) progressMeta = "";
+    tone = "error";
+  } else if (summary && (status === "finished" || !status)) {
+    progressCopy = `Uploaded: ${activityCount(summary.uploaded)}`;
+    progressMeta = formatDateTime(data.lastUploadAt || data.lastUserMessageAt);
+    tone = "neutral";
   }
-
-  const actionsEnabled = !syncInProgress;
-  const cacheClearEnabled = !syncInProgress;
 
   return {
     actionStatusText: transientStatus.text,
     actionStatusTone: transientStatus.tone,
-    actionsEnabled,
-    cacheClearEnabled,
-    progressCopy,
-    progressMeta,
-    progressMetrics,
-    stateBadgeLabel,
-    stateBadgeTone,
-    stateCopy,
-    stateMeta
+    actionsEnabled: !running,
+    cacheClearEnabled: !running,
+    progressCopy, progressMeta, tone,
+    showResult: Boolean(progressCopy), showProgress,
+    progressValue: current,
+    progressMax: Math.max(total, 1)
   };
 }
 
 async function refreshView() {
-  const [tab, data] = await Promise.all([getActiveTab(), chrome.storage.local.get(STORAGE_KEYS)]);
-  const view = buildViewModel(tab, data);
-
-  setBadge(view.stateBadgeLabel, view.stateBadgeTone);
-  DOM.stateCopy.textContent = view.stateCopy;
-  DOM.stateMeta.textContent = view.stateMeta;
+  const data = await chrome.storage.local.get(STORAGE_KEYS);
+  const view = buildViewModel(null, data);
+  DOM.progressSection.hidden = !view.showResult;
+  DOM.progressSection.dataset.tone = view.tone;
   DOM.progressCopy.textContent = view.progressCopy;
   DOM.progressMeta.textContent = view.progressMeta;
-
-  setMetric(DOM.metricProgress, view.progressMetrics.processed);
-  setMetric(DOM.metricUploaded, view.progressMetrics.uploaded);
-  setMetric(DOM.metricDuplicate, view.progressMetrics.duplicate);
-  setMetric(DOM.metricFailed, view.progressMetrics.failed);
-  DOM.actionStatus.textContent = view.actionStatusText;
-  DOM.actionStatus.className = `action-status action-status-${view.actionStatusTone}`;
-
+  DOM.progressBar.hidden = !view.showProgress;
+  DOM.progressBar.max = view.progressMax;
+  DOM.progressBar.value = view.progressValue;
   DOM.btnNew.disabled = !view.actionsEnabled;
+  DOM.btnNew.ariaBusy = String(!view.actionsEnabled);
   DOM.btnClearCache.disabled = !view.cacheClearEnabled;
-  if (clearCacheConfirm.armed && !view.cacheClearEnabled) {
-    disarmClearCache();
-  }
+  if (clearCacheConfirm.armed && !view.cacheClearEnabled) disarmClearCache();
 }
 
 async function start() {
@@ -341,7 +231,7 @@ function armClearCache() {
   DOM.btnClearCache.textContent = "Confirm Clear";
   DOM.btnClearCache.classList.add("utility-btn-danger");
   setActionStatus(
-    "This clears processed activities, auth cache, statuses and logs. Click again to confirm.",
+    "Clear saved sign-in, sync history and logs? Click Confirm Clear to reset.",
     "muted"
   );
   clearCacheConfirm.timer = setTimeout(() => {

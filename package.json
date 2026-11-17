@@ -1,6 +1,6 @@
 {
   "name": "mywhoosh-garmin-sync",
-  "version": "0.3.0",
+  "version": "0.3.5",
   "private": true,
   "description": "Chrome extension that uploads MyWhoosh FIT activities to Garmin Connect.",
   "scripts": {
