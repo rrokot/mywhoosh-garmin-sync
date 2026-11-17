@@ -118,12 +118,6 @@ test("isGarminSsoEmbedTicketUrl only matches the embed callback", () => {
   assert.equal(MWG.isGarminSsoEmbedTicketUrl("https://sso.garmin.com/sso/signin?ticket=ST-1"), false);
 });
 
-test("seemsLikeAuthHtml flags sign-in responses", () => {
-  assert.equal(MWG.seemsLikeAuthHtml("https://sso.garmin.com/sso/signin", "application/json", ""), true);
-  assert.equal(MWG.seemsLikeAuthHtml("https://connectapi.garmin.com/x", "text/html", ""), true);
-  assert.equal(MWG.seemsLikeAuthHtml("https://connectapi.garmin.com/x", "application/json", "{}"), false);
-});
-
 test("parseHtmlTitle extracts the sign-in page title", () => {
   assert.equal(MWG.parseHtmlTitle("<html><head><title> Sign In </title></head></html>"), "Sign In");
   assert.equal(MWG.parseHtmlTitle("<html></html>"), "");

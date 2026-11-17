@@ -24,7 +24,6 @@
     isGarminSignInUrl,
     looksLikeDuplicate,
     notify,
-    seemsLikeAuthHtml,
     setUserStatus,
     wait,
     waitForTabComplete
@@ -34,7 +33,6 @@
     garminApiAuthHeaderCache: null,
     garminApiAuthHeaderCapturedAt: 0,
     garminApiAuthHeaderLogAt: 0,
-    garminCsrfTokenCache: null,
     garminOauthConsumerCache: null,
     garminSsoTicketCache: null,
     garminSsoTicketCapturedAt: 0
@@ -51,7 +49,6 @@
     garminState.garminApiAuthHeaderCache = null;
     garminState.garminApiAuthHeaderCapturedAt = 0;
     garminState.garminApiAuthHeaderLogAt = 0;
-    garminState.garminCsrfTokenCache = null;
     garminState.garminOauthConsumerCache = null;
     garminState.garminSsoTicketCache = null;
     garminState.garminSsoTicketCapturedAt = 0;
@@ -511,14 +508,6 @@
         authenticated: true,
         ticket: cachedTicket,
         reason: "interactive-ticket-cache"
-      };
-    }
-
-    if (garminState.garminCsrfTokenCache) {
-      return {
-        authenticated: true,
-        token: garminState.garminCsrfTokenCache,
-        reason: "token-cache"
       };
     }
 

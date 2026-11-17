@@ -26,7 +26,7 @@ function loadPopup(storage = {}) {
     URL, setTimeout, clearTimeout
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../browser-extension/popup/popup.js"), "utf8"), context);
-  return { view: (data, tab = null) => context.buildViewModel(tab, data), elements, context };
+  return { view: (data) => context.buildViewModel(data), elements, context };
 }
 
 test("ready popup contains only the sync action, with no auth speculation or repeated status", () => {

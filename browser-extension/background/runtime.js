@@ -312,26 +312,6 @@
     );
   }
 
-  function seemsLikeAuthHtml(responseUrl, contentType, bodyText) {
-    const url = String(responseUrl || "").toLowerCase();
-    const ctype = String(contentType || "").toLowerCase();
-    const text = String(bodyText || "").toLowerCase();
-
-    if (url.includes("/signin")) {
-      return true;
-    }
-
-    if (ctype.includes("text/html")) {
-      return true;
-    }
-
-    if (text.includes("<html") && (text.includes("signin") || text.includes("garmin account"))) {
-      return true;
-    }
-
-    return false;
-  }
-
   function isGarminSignInUrl(url) {
     const text = String(url || "").toLowerCase();
     return text.includes("/signin") || text.includes("sso.garmin.com/portal/sso");
@@ -689,7 +669,6 @@
     notify,
     resetRuntimeCaches,
     saveLastError,
-    seemsLikeAuthHtml,
     setPendingActivityKeys,
     setStoredMyWhooshAuth,
     setProcessedKeysMap,

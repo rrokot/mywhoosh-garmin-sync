@@ -1,6 +1,5 @@
 const STORAGE_KEYS = [
   "lastError",
-  "lastErrorAt",
   "lastUploadAt",
   "lastUploadSummary",
   "lastUserMessage",
@@ -8,8 +7,7 @@ const STORAGE_KEYS = [
   "syncStatusAt",
   "syncInProgress",
   "syncProgress",
-  "syncStatus",
-  "syncStatusMessage"
+  "syncStatus"
 ];
 
 const DOM = {
@@ -23,10 +21,6 @@ const DOM = {
   progressMeta: document.getElementById("progress-meta")
 };
 
-const transientStatus = {
-  text: "",
-  tone: "muted"
-};
 const CLEAR_CACHE_CONFIRM_TIMEOUT_MS = 30000;
 const clearCacheConfirm = {
   armed: false,
@@ -68,10 +62,8 @@ async function copyText(text) {
 }
 
 function setActionStatus(text, tone = "muted") {
-  transientStatus.text = text || "";
-  transientStatus.tone = tone;
-  DOM.actionStatus.textContent = transientStatus.text;
-  DOM.actionStatus.className = `action-status action-status-${transientStatus.tone}`;
+  DOM.actionStatus.textContent = text || "";
+  DOM.actionStatus.className = `action-status action-status-${tone}`;
 }
 
 function formatDateTime(value) {
@@ -113,7 +105,7 @@ function selectLastRunLines(lines) {
   return lines.slice(-80);
 }
 
-function buildViewModel(_tab, data = {}) {
+function buildViewModel(data = {}) {
   const statusAt = Date.parse(String(data.syncStatusAt || ""));
   const stale = Boolean(data.syncInProgress) && Number.isFinite(statusAt) && Date.now() - statusAt > STALE_RUNNING_MS;
   const running = Boolean(data.syncInProgress) && !stale;
@@ -156,8 +148,6 @@ function buildViewModel(_tab, data = {}) {
   }
 
   return {
-    actionStatusText: transientStatus.text,
-    actionStatusTone: transientStatus.tone,
     actionsEnabled: !running,
     cacheClearEnabled: !running,
     progressCopy, progressMeta, tone,
@@ -169,7 +159,7 @@ function buildViewModel(_tab, data = {}) {
 
 async function refreshView() {
   const data = await chrome.storage.local.get(STORAGE_KEYS);
-  const view = buildViewModel(null, data);
+  const view = buildViewModel(data);
   DOM.progressSection.hidden = !view.showResult;
   DOM.progressSection.dataset.tone = view.tone;
   DOM.progressCopy.textContent = view.progressCopy;
