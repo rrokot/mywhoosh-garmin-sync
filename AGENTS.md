@@ -1,50 +1,19 @@
 # AGENTS.md
 
-## Project Scope
-- This repository is extension-only.
-- Main code lives in `browser-extension/`.
+Chrome extension only. Code: `browser-extension/`. Tests: `tests/`.
 
-## Main Components
-- `browser-extension/background.js`: service worker entrypoint that loads background modules.
-- `browser-extension/background/runtime.js`: shared constants, logging, storage, Chrome adapters.
-- `browser-extension/background/garmin.js`: Garmin auth and upload flow.
-- `browser-extension/background/mywhoosh.js`: MyWhoosh API client and payload normalization.
-- `browser-extension/background/service-worker.js`: sync orchestration and Chrome listeners.
-- `browser-extension/content/mywhoosh-auth.js`: reads MyWhoosh auth from page storage.
-- `browser-extension/popup/popup.js` + `browser-extension/popup/popup.html`: UI actions and status.
-- `tools/tail_extension_logs.ps1`: debug log extraction.
-- `tests/`: `node:test` suites for the pure helpers, loaded through `tests/harness.js` (vm sandbox + Chrome stub).
+## Rules
 
-## Working Rules
-- Keep Garmin upload path API-first (`connectapi`).
-- Keep sync behavior:
-  - `Sync` uploads only not-yet-processed activities.
-- Mark activity as processed only on `uploaded` or `duplicate`.
-- Preserve flat logs (`MWGLOG`) in `chrome.storage.local` (`syncLogLines`) for diagnostics.
-- Keep log writes debounced; only `error` entries flush immediately.
-- Persist `processedFitKeys` per activity, not once at the end of a run.
-- Keep `host_permissions` narrow: list only the hosts the sync calls, never `<all_urls>`.
-- Keep MyWhoosh auth flow token-based:
-  - use stored `mywhooshAuth` when valid
-  - if missing/expired, open interactive MyWhoosh login tab and continue automatically
-- Keep Garmin auth flow session-based:
-  - use current Chrome Garmin session
-  - if auth is missing, open interactive Garmin login tab and continue automatically
-- Collect user input in the popup or the login tab, not with `prompt()` on MyWhoosh pages.
+- Upload to Garmin through `connectapi`; process only activities not already marked as processed.
+- Mark an activity processed only after `uploaded` or `duplicate`, and persist `processedFitKeys` after each activity.
+- Reuse stored `mywhooshAuth` and the current Chrome Garmin session. When login is needed, open the relevant tab and resume automatically.
+- Keep flat `MWGLOG` entries in `chrome.storage.local.syncLogLines`. Debounce writes; flush errors immediately.
+- Restrict `host_permissions` to required hosts. Never use `<all_urls>`.
+- Collect input in the popup or login tab; do not use page `prompt()`.
+- Keep the popup minimal: MyWhoosh → Garmin button, Uploaded count, date. Logs and cache clearing belong in a collapsed, arrow-only block.
 
-## Validation Before Finish
-- Run `npm run verify`, which covers:
-  - `node --check` on every extension script (`background.js`, all `background/*.js`,
-    `content/mywhoosh-auth.js`, `popup/popup.js`)
-  - `node --test "tests/*.test.js"`
-- If extension behavior changed, bump `browser-extension/manifest.json` version.
+## Validation
 
-## Manual Runtime Check
-1. Open `chrome://extensions`.
-2. Reload unpacked extension from `browser-extension/`.
-3. Click extension icon and run `Sync`.
-4. If MyWhoosh or Garmin login is required, complete sign-in in the tab opened by the extension.
-5. If needed, inspect logs:
-   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1`
-   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tail_extension_logs.ps1 -ErrorsOnly`
-   - pass `-ExtensionId` only if auto-detection picks the wrong extension storage
+Run `npm run verify` before finishing. Bump `browser-extension/manifest.json` when extension behavior changes.
+
+For runtime checks, reload in `chrome://extensions`, start an upload and complete any requested login. Read diagnostics with `tools/tail_extension_logs.ps1` (`-ErrorsOnly` filters errors).
