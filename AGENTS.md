@@ -3,7 +3,6 @@
 ## Project Scope
 - This repository is extension-only.
 - Main code lives in `browser-extension/`.
-- Do not add legacy Python/BAT sync flows back.
 
 ## Main Components
 - `browser-extension/background.js`: service worker entrypoint that loads background modules.
@@ -24,14 +23,14 @@
 - Preserve flat logs (`MWGLOG`) in `chrome.storage.local` (`syncLogLines`) for diagnostics.
 - Keep log writes debounced; only `error` entries flush immediately.
 - Persist `processedFitKeys` per activity, not once at the end of a run.
-- Keep `host_permissions` narrow; do not reintroduce `<all_urls>`.
+- Keep `host_permissions` narrow: list only the hosts the sync calls, never `<all_urls>`.
 - Keep MyWhoosh auth flow token-based:
   - use stored `mywhooshAuth` when valid
   - if missing/expired, open interactive MyWhoosh login tab and continue automatically
 - Keep Garmin auth flow session-based:
   - use current Chrome Garmin session
   - if auth is missing, open interactive Garmin login tab and continue automatically
-- Do not reintroduce page `prompt()`-based UX on MyWhoosh pages.
+- Collect user input in the popup or the login tab, not with `prompt()` on MyWhoosh pages.
 
 ## Validation Before Finish
 - Run `npm run verify`, which covers:
